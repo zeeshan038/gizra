@@ -7,9 +7,6 @@ use App\Http\Controllers\Admin\CashBackController;
 Route::group(['namespace' => 'Admin', 'as' => 'admin.'], function () {
 
     Route::group(['middleware' => ['admin']], function () {
-        // Route::get("/new-page", function(){
-        //     return view("admin-views.create-advertisement");
-        // });
         Route::get('lang/{locale}', 'LanguageController@lang')->name('lang');
         Route::get('settings', 'SystemController@settings')->name('settings');
         Route::get('system-currency', 'SystemController@system_currency')->name('system_currency');

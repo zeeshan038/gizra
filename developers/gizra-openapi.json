@@ -1,0 +1,985 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "GIZRA Restaurant Integration API",
+    "version": "1.0.0",
+    "description": "Integration API for connecting an external POS / KDS system to GIZRA.\n\nA restaurant partner uses this API to:\n1. Pull orders placed on GIZRA into their own POS.\n2. Push order status changes back to GIZRA (accept, start cooking, ready for handover, delivered, cancel).\n\n## Availability of each section\n\nAll endpoints in this document are tagged `x-availability: live` — implemented and verified against `https://backend.gizra.app`. Nothing in this document is planned or hypothetical.\n\n## Two ways to authenticate\n\n1. **Account token** (`/api/v1/vendor/*`) — bearer token from the restaurant's own login. Full account access. Fastest way to start testing.\n2. **Scoped partner key** (`/api/v1/partner/*`) — `X-Gizra-Key` + HMAC request signing, issued per-restaurant from the GIZRA admin panel. Scoped (`orders:read` / `orders:write` / `menu:read`), revocable, optionally IP-restricted, and never exposes the restaurant's password. **Recommended for any production integration.** Contact GIZRA integrations to have a key issued — there is no self-service endpoint for creating one.\n\nThe orders/status endpoints behave identically either way; only the auth headers differ.\n\n## Integration model available today\n\nTwo options, and they can be combined:\n\n- **Polling.** Call `GET .../current-orders` on an interval (10-30 s recommended), diff against what has already been seen, and call `.../update-order-status` as the kitchen progresses the order.\n- **Webhooks.** Register an HTTPS endpoint (via GIZRA admin panel) and GIZRA POSTs `order.created` / `order.status_changed` to it as they happen, HMAC-signed, with retry for 24h. Removes the need to poll. See the `OrderEvent` schema.\n\n## Time and money formats\n\n- Timestamps in order records are `YYYY-MM-DD HH:MM:SS` in the restaurant's local time, except `created_at`/`updated_at` on nested objects which may be ISO-8601 UTC.\n- Money values are numbers in the restaurant's currency. The currency symbol is returned by `GET /api/v1/config` (`currency_symbol`).\n",
+    "contact": {
+      "name": "GIZRA Integrations",
+      "email": "Gyzrh13@gmail.com"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://backend.gizra.app",
+      "description": "Production"
+    }
+  ],
+  "tags": [
+    { "name": "Authentication", "description": "Obtaining and using an access token." },
+    { "name": "Orders", "description": "Pulling orders into the partner POS." },
+    { "name": "Order status", "description": "Pushing kitchen progress back to GIZRA." },
+    { "name": "Restaurant", "description": "Restaurant profile and configuration." },
+    { "name": "Partner API", "description": "Scoped, signed access via X-Gizra-Key — the recommended auth path for production integrations." },
+    { "name": "Webhooks", "description": "Push delivery of order events. Registered via the GIZRA admin panel." }
+  ],
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/api/v1/auth/vendor/login": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Log in and obtain an access token",
+        "operationId": "vendorLogin",
+        "x-availability": "live",
+        "security": [],
+        "description": "Returns a bearer token for the restaurant account.\n\n**The token does not expire on a fixed schedule.** Store it securely on the partner server, never in browser or mobile client code. If the restaurant changes its password, request a new token.\n\nSee the security notes in the description of `bearerAuth`: sharing the restaurant's own password with an integrator is discouraged. Scoped partner keys are the planned replacement.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password"],
+                "properties": {
+                  "email": { "type": "string", "format": "email", "example": "restaurant@example.com" },
+                  "password": { "type": "string", "format": "password", "example": "••••••••" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": { "type": "string", "description": "Bearer token. Send as `Authorization: Bearer <token>`." },
+                    "is_phone_verified": { "type": "boolean" }
+                  }
+                },
+                "example": { "token": "t3hmpZFAlLLqDFVqLjdR5PId…", "is_phone_verified": true }
+              }
+            }
+          },
+          "403": {
+            "description": "Account suspended or not permitted",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": { "errors": [{ "code": "auth-002", "message": "Your account is suspended" }] }
+              }
+            }
+          },
+          "404": {
+            "description": "Credentials not recognised",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": { "errors": [{ "code": "auth-001", "message": "Credentials do not match" }] }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/v1/config": {
+      "get": {
+        "tags": ["Restaurant"],
+        "summary": "Platform configuration",
+        "operationId": "getConfig",
+        "x-availability": "live",
+        "security": [],
+        "description": "Currency symbol, time format, order confirmation model and payment options. Read once at partner startup and cache; it changes rarely.\n\nThe fields most integrations need are `currency_symbol`, `currency_symbol_direction`, `timeformat`, `order_confirmation_model` and `order_delivery_verification`.",
+        "responses": {
+          "200": {
+            "description": "Configuration",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object" },
+                "example": {
+                  "business_name": "Gizra APP",
+                  "country": "IL",
+                  "currency_symbol": "₪",
+                  "currency_symbol_direction": "left",
+                  "timeformat": "24",
+                  "order_confirmation_model": "restaurant",
+                  "order_delivery_verification": true,
+                  "cash_on_delivery": true,
+                  "digital_payment": true,
+                  "take_away": true,
+                  "home_delivery": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/v1/vendor/profile": {
+      "get": {
+        "tags": ["Restaurant"],
+        "summary": "Restaurant profile and order counters",
+        "operationId": "getProfile",
+        "x-availability": "live",
+        "description": "Use this to confirm the token is valid and to read the restaurant id, delivery time and today/week/month order counters.",
+        "responses": {
+          "200": {
+            "description": "Profile",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Profile" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+
+    "/api/v1/vendor/current-orders": {
+      "get": {
+        "tags": ["Orders"],
+        "summary": "All active orders",
+        "operationId": "getCurrentOrders",
+        "x-availability": "live",
+        "description": "**This is the primary polling endpoint.**\n\nReturns every order that is not yet finished: statuses `pending`, `accepted`, `confirmed`, `processing`, `handover`, `picked_up`.\n\nRecommended polling interval is 10-30 seconds. Diff the returned `id` values against orders already imported; anything new with `order_status: \"pending\"` is a new order for the kitchen.\n\nThe response is a bare JSON array, not an envelope.",
+        "responses": {
+          "200": {
+            "description": "Active orders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Order" }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+
+    "/api/v1/vendor/completed-orders": {
+      "get": {
+        "tags": ["Orders"],
+        "summary": "Finished orders, paginated",
+        "operationId": "getCompletedOrders",
+        "x-availability": "live",
+        "description": "Order history. Paginated with `offset` (1-based page number) and `limit`.",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "enum": ["all", "delivered", "refunded", "canceled", "failed"], "default": "all" },
+            "description": "Filter by final status."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "integer", "minimum": 1, "default": 1 },
+            "description": "1-based page number, not a row offset."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 10 },
+            "description": "Rows per page."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated history",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaginatedOrders" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+
+    "/api/v1/vendor/order": {
+      "get": {
+        "tags": ["Orders"],
+        "summary": "One order header",
+        "operationId": "getOrder",
+        "x-availability": "live",
+        "description": "Single order record. Same shape as one element of `current-orders`. Does not include line items — use `/api/v1/vendor/order-details` for those.",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "integer" },
+            "example": 100152
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Order",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Order" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "description": "Order not found or not owned by this restaurant" }
+        }
+      }
+    },
+
+    "/api/v1/vendor/order-details": {
+      "get": {
+        "tags": ["Orders"],
+        "summary": "Line items for one order",
+        "operationId": "getOrderDetails",
+        "x-availability": "live",
+        "description": "The items the kitchen has to make: food, chosen variations, add-ons, quantity and price.\n\nThe array is nested under `order.details` in the response body.",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "integer" },
+            "example": 100152
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Order with its line items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "order": {
+                      "type": "object",
+                      "properties": {
+                        "details": {
+                          "type": "array",
+                          "items": { "$ref": "#/components/schemas/OrderDetail" }
+                        },
+                        "subscription": { "type": "object", "nullable": true }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+
+    "/api/v1/vendor/update-order-status": {
+      "post": {
+        "tags": ["Order status"],
+        "summary": "Move an order to the next status",
+        "operationId": "updateOrderStatus",
+        "x-availability": "live",
+        "description": "Pushes kitchen progress back to GIZRA. This is what makes the customer app show \"confirmed\", \"being prepared\", \"on the way\".\n\n**Two things to note about the request format:**\n\n1. The body is `multipart/form-data`, not JSON. This is because the same endpoint optionally accepts delivery proof images.\n2. It is a POST that carries `_method=put`. Laravel method spoofing. Send the literal field `_method` with value `put`.\n\n### Allowed transitions\n\n| From | To | Notes |\n|---|---|---|\n| `pending` | `confirmed` | Restaurant accepts the order. |\n| `pending` | `canceled` | Only if the platform allows restaurant cancellation (`canceled_by_restaurant` in `/api/v1/config`). `reason` is required. |\n| `confirmed` | `processing` | Kitchen starts cooking. Send `processing_time` in minutes. |\n| `processing` | `handover` | Food is ready for the courier. |\n| `handover` | `delivered` | Only for self-delivery or take-away. Requires `otp` when `order_delivery_verification` is true in `/api/v1/config`. |\n\nSending a transition that is not allowed for the order's current status returns a non-200 with a message.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["order_id", "status", "_method"],
+                "properties": {
+                  "_method": {
+                    "type": "string",
+                    "enum": ["put"],
+                    "description": "Always the literal string `put`."
+                  },
+                  "order_id": { "type": "integer", "example": 100152 },
+                  "status": {
+                    "type": "string",
+                    "enum": ["confirmed", "processing", "handover", "delivered", "canceled"],
+                    "example": "processing"
+                  },
+                  "processing_time": {
+                    "type": "string",
+                    "description": "Preparation time in whole minutes. Send when moving to `processing`. Empty string otherwise.",
+                    "example": "20"
+                  },
+                  "otp": {
+                    "type": "string",
+                    "description": "Delivery verification code from the customer. Required for `delivered` when `order_delivery_verification` is true. Empty string otherwise.",
+                    "example": ""
+                  },
+                  "reason": {
+                    "type": "string",
+                    "description": "Cancellation reason. Required when `status` is `canceled`. Omit the field entirely otherwise.",
+                    "example": "Item out of stock"
+                  },
+                  "order_proof[]": {
+                    "type": "array",
+                    "items": { "type": "string", "format": "binary" },
+                    "description": "Optional delivery proof images."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Status updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "message": { "type": "string" } }
+                },
+                "example": { "message": "Order status updated successfully" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "description": "Transition not permitted for this order or restaurant" },
+          "404": { "description": "Order not found or not owned by this restaurant" }
+        }
+      }
+    },
+
+    "/api/v1/customer/order/cancellation-reasons": {
+      "get": {
+        "tags": ["Order status"],
+        "summary": "Valid cancellation reasons",
+        "operationId": "getCancellationReasons",
+        "x-availability": "live",
+        "description": "The list to present to kitchen staff when cancelling. Pass the chosen `reason` text to `update-order-status`.",
+        "parameters": [
+          { "name": "offset", "in": "query", "required": true, "schema": { "type": "integer", "default": 1 } },
+          { "name": "limit", "in": "query", "required": true, "schema": { "type": "integer", "default": 30 } },
+          { "name": "type", "in": "query", "required": true, "schema": { "type": "string", "enum": ["restaurant"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reasons",
+            "content": {
+              "application/json": {
+                "example": {
+                  "total_size": 2,
+                  "limit": "30",
+                  "offset": "1",
+                  "reasons": [
+                    { "id": 1, "reason": "Item out of stock" },
+                    { "id": 2, "reason": "Kitchen closed" }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/v1/partner/profile": {
+      "get": {
+        "tags": ["Partner API"],
+        "summary": "Restaurant profile (partner-key auth)",
+        "operationId": "partnerGetProfile",
+        "x-availability": "live",
+        "security": [{ "partnerKeyAuth": [], "partnerSignatureAuth": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/GizraTimestamp" },
+          { "$ref": "#/components/parameters/GizraSignature" }
+        ],
+        "description": "Identical response to `GET /api/v1/vendor/profile`. Requires scope `orders:read`.",
+        "responses": {
+          "200": { "description": "Profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Profile" } } } },
+          "401": { "$ref": "#/components/responses/PartnerUnauthorized" },
+          "403": { "$ref": "#/components/responses/PartnerForbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+
+    "/api/v1/partner/current-orders": {
+      "get": {
+        "tags": ["Partner API"],
+        "summary": "All active orders (partner-key auth)",
+        "operationId": "partnerGetCurrentOrders",
+        "x-availability": "live",
+        "security": [{ "partnerKeyAuth": [], "partnerSignatureAuth": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/GizraTimestamp" },
+          { "$ref": "#/components/parameters/GizraSignature" }
+        ],
+        "description": "Identical response to `GET /api/v1/vendor/current-orders`. Requires scope `orders:read`. Rate limit: 120 requests/minute per key.",
+        "responses": {
+          "200": { "description": "Active orders", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Order" } } } } },
+          "401": { "$ref": "#/components/responses/PartnerUnauthorized" },
+          "403": { "$ref": "#/components/responses/PartnerForbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+
+    "/api/v1/partner/completed-orders": {
+      "get": {
+        "tags": ["Partner API"],
+        "summary": "Finished orders, paginated (partner-key auth)",
+        "operationId": "partnerGetCompletedOrders",
+        "x-availability": "live",
+        "security": [{ "partnerKeyAuth": [], "partnerSignatureAuth": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/GizraTimestamp" },
+          { "$ref": "#/components/parameters/GizraSignature" },
+          { "name": "status", "in": "query", "required": true, "schema": { "type": "string", "enum": ["all", "delivered", "refunded", "canceled", "failed"], "default": "all" } },
+          { "name": "offset", "in": "query", "required": true, "schema": { "type": "integer", "minimum": 1, "default": 1 } },
+          { "name": "limit", "in": "query", "required": true, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 10 } }
+        ],
+        "description": "Identical to `GET /api/v1/vendor/completed-orders`. Requires scope `orders:read`.",
+        "responses": {
+          "200": { "description": "Paginated history", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaginatedOrders" } } } },
+          "401": { "$ref": "#/components/responses/PartnerUnauthorized" },
+          "403": { "$ref": "#/components/responses/PartnerForbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+
+    "/api/v1/partner/order": {
+      "get": {
+        "tags": ["Partner API"],
+        "summary": "One order header (partner-key auth)",
+        "operationId": "partnerGetOrder",
+        "x-availability": "live",
+        "security": [{ "partnerKeyAuth": [], "partnerSignatureAuth": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/GizraTimestamp" },
+          { "$ref": "#/components/parameters/GizraSignature" },
+          { "name": "order_id", "in": "query", "required": true, "schema": { "type": "integer" }, "example": 100152 }
+        ],
+        "description": "Identical to `GET /api/v1/vendor/order`. Requires scope `orders:read`.",
+        "responses": {
+          "200": { "description": "Order", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Order" } } } },
+          "401": { "$ref": "#/components/responses/PartnerUnauthorized" },
+          "403": { "$ref": "#/components/responses/PartnerForbidden" },
+          "404": { "description": "Order not found or not owned by this key's restaurant" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+
+    "/api/v1/partner/order-details": {
+      "get": {
+        "tags": ["Partner API"],
+        "summary": "Line items for one order (partner-key auth)",
+        "operationId": "partnerGetOrderDetails",
+        "x-availability": "live",
+        "security": [{ "partnerKeyAuth": [], "partnerSignatureAuth": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/GizraTimestamp" },
+          { "$ref": "#/components/parameters/GizraSignature" },
+          { "name": "order_id", "in": "query", "required": true, "schema": { "type": "integer" }, "example": 100152 }
+        ],
+        "description": "Identical to `GET /api/v1/vendor/order-details`. Requires scope `orders:read`.",
+        "responses": {
+          "200": { "description": "Order with its line items" },
+          "401": { "$ref": "#/components/responses/PartnerUnauthorized" },
+          "403": { "$ref": "#/components/responses/PartnerForbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+
+    "/api/v1/partner/update-order-status": {
+      "put": {
+        "tags": ["Partner API"],
+        "summary": "Move an order to the next status (partner-key auth)",
+        "operationId": "partnerUpdateOrderStatus",
+        "x-availability": "live",
+        "security": [{ "partnerKeyAuth": [], "partnerSignatureAuth": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/GizraTimestamp" },
+          { "$ref": "#/components/parameters/GizraSignature" }
+        ],
+        "description": "Identical behaviour to `POST /api/v1/vendor/update-order-status`, including the `multipart/form-data` + `_method=put` requirement (send as `POST` with the `_method` field set to `put`) — see that endpoint's description for the field list and allowed transitions.\n\nRequires scope `orders:write`. Rate limit: 60 requests/minute per key.\n\n**Signing note:** the signature is computed over the raw multipart body exactly as sent, same as any other request — compute it after building the final multipart payload, not over the logical field values.",
+        "responses": {
+          "200": { "description": "Status updated" },
+          "401": { "$ref": "#/components/responses/PartnerUnauthorized" },
+          "403": { "$ref": "#/components/responses/PartnerForbidden" },
+          "404": { "description": "Order not found or not owned by this key's restaurant" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    }
+  },
+
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Token from `POST /api/v1/auth/vendor/login`.\n\nSend on every request:\n\n    Authorization: Bearer <token>\n    Accept: application/json\n    X-localization: he\n\n`X-localization` selects the language of returned messages (`en`, `he`, `ar`, `es`, `bn`). It does not affect data.\n\n**Handling of this token is the partner's responsibility:**\n\n- Store it server-side only. Never ship it in a browser bundle, a mobile app, or a desktop POS binary that a customer could unpack.\n- Never place it in a URL or query string; it will end up in server logs and browser history.\n- Treat it as equivalent to the restaurant's password, because today it is obtained with that password.\n- Rotate it by changing the restaurant password and logging in again if you suspect exposure."
+      },
+      "partnerKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Gizra-Key",
+        "description": "Scoped per-restaurant key (e.g. `gzk_...`), issued from the GIZRA admin panel. Identifies which restaurant and which scopes (`orders:read`, `orders:write`, `menu:read`) the request is authorized for. Must be paired with `X-Gizra-Timestamp` and `X-Gizra-Signature` — see `partnerSignatureAuth`."
+      },
+      "partnerSignatureAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Gizra-Signature",
+        "description": "`sha256=<hex>` — `HMAC-SHA256(secret, \"<X-Gizra-Timestamp>.<raw request body>\")`, keyed with the secret shown once when the key was issued (never sent over the wire again). For GET requests the raw body is empty, so the signed string is just `\"<timestamp>.\"`.\n\n`X-Gizra-Timestamp` (unix seconds) must accompany every signed request and must be within 300 seconds of GIZRA's clock or the request is rejected — this blocks replay of a captured request.\n\nExample (Node.js):\n\n    const crypto = require('crypto');\n    const ts = Math.floor(Date.now() / 1000).toString();\n    const body = ''; // empty for GET\n    const sig = 'sha256=' + crypto.createHmac('sha256', secret).update(ts + '.' + body).digest('hex');\n    // headers: X-Gizra-Key, X-Gizra-Timestamp: ts, X-Gizra-Signature: sig"
+      }
+    },
+
+    "parameters": {
+      "GizraTimestamp": {
+        "name": "X-Gizra-Timestamp",
+        "in": "header",
+        "required": true,
+        "schema": { "type": "string", "example": "1754130741" },
+        "description": "Unix seconds. Must be within 300 seconds of GIZRA's clock."
+      },
+      "GizraSignature": {
+        "name": "X-Gizra-Signature",
+        "in": "header",
+        "required": true,
+        "schema": { "type": "string", "example": "sha256=9c1185a5c5e9fc54..." },
+        "description": "See `partnerSignatureAuth` in securitySchemes for the exact computation."
+      }
+    },
+
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing, malformed or rejected token",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+            "example": { "errors": [{ "code": "auth-001", "message": "Unauthenticated." }] }
+          }
+        }
+      },
+      "PartnerUnauthorized": {
+        "description": "Missing/invalid X-Gizra-Key, missing/expired timestamp, or signature verification failed",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+            "example": { "errors": [{ "code": "partner-auth", "message": "Invalid or revoked API key." }] }
+          }
+        }
+      },
+      "PartnerForbidden": {
+        "description": "Key does not have the required scope, or caller IP is not on the key's allowlist",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+            "example": { "errors": [{ "code": "partner-auth", "message": "Key is missing required scope: orders:write." }] }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Too many requests for this key (120/min reads, 60/min writes). See the Retry-After header.",
+        "headers": {
+          "Retry-After": { "schema": { "type": "integer" }, "description": "Seconds until the limit resets." }
+        },
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+            "example": { "errors": [{ "code": "partner-throttle", "message": "Rate limit exceeded." }] }
+          }
+        }
+      }
+    },
+
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "description": "Standard error envelope. `errors` is always an array, even for a single error.",
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": { "type": "string", "example": "auth-002" },
+                "message": { "type": "string", "example": "Your account is suspended" }
+              }
+            }
+          }
+        }
+      },
+
+      "OrderStatus": {
+        "type": "string",
+        "description": "Lifecycle status of an order.\n\n- `pending` — placed by the customer, waiting for the restaurant to accept.\n- `accepted` — accepted in a deliveryman-confirmation platform configuration.\n- `confirmed` — restaurant accepted it.\n- `processing` — kitchen is cooking. `processing_time` holds the promised minutes.\n- `handover` — ready and handed to the courier.\n- `picked_up` — courier is on the way.\n- `delivered` — completed.\n- `canceled` — cancelled by restaurant, customer or admin.\n- `failed` — payment or fulfilment failed.\n- `refund_requested` / `refunded` — refund flow.",
+        "enum": [
+          "pending", "accepted", "confirmed", "processing", "handover",
+          "picked_up", "delivered", "canceled", "failed",
+          "refund_requested", "refunded", "refund_request_canceled"
+        ]
+      },
+
+      "Order": {
+        "type": "object",
+        "description": "An order header. Line items are fetched separately from `/api/v1/vendor/order-details`.",
+        "properties": {
+          "id": { "type": "integer", "description": "GIZRA order number. Show this to the kitchen.", "example": 100152 },
+          "user_id": { "type": "integer", "example": 1 },
+          "order_amount": { "type": "number", "format": "float", "description": "Total charged to the customer.", "example": 53.45 },
+          "coupon_discount_amount": { "type": "number", "format": "float", "example": 0 },
+          "coupon_discount_title": { "type": "string", "nullable": true },
+          "restaurant_discount_amount": { "type": "number", "format": "float", "example": 0 },
+          "total_tax_amount": { "type": "number", "format": "float", "example": 2.45 },
+          "tax_status": { "type": "string", "enum": ["included", "excluded"], "description": "When `included`, tax is already inside the item prices." },
+          "delivery_charge": { "type": "number", "format": "float", "example": 2 },
+          "extra_packaging_amount": { "type": "number", "format": "float", "nullable": true },
+          "additional_charge": { "type": "number", "format": "float", "nullable": true },
+          "dm_tips": { "type": "number", "format": "float", "example": 0 },
+          "ref_bonus_amount": { "type": "number", "format": "float", "nullable": true },
+          "payment_status": { "type": "string", "enum": ["paid", "unpaid", "partially_paid"], "example": "unpaid" },
+          "payment_method": {
+            "type": "string",
+            "description": "`cash_on_delivery`, `digital_payment`, `wallet`, `cash`, `partial_payment`.",
+            "example": "cash_on_delivery"
+          },
+          "order_status": { "$ref": "#/components/schemas/OrderStatus" },
+          "order_type": { "type": "string", "enum": ["delivery", "take_away", "dine_in"], "example": "delivery" },
+          "order_note": { "type": "string", "nullable": true, "description": "Free text the customer added to the whole order." },
+          "unavailable_item_note": { "type": "string", "nullable": true, "description": "What the customer wants done if an item is unavailable." },
+          "delivery_instruction": { "type": "string", "nullable": true },
+          "cutlery": { "type": "boolean", "nullable": true, "description": "Customer asked for cutlery." },
+          "scheduled": { "type": "integer", "enum": [0, 1], "description": "1 when the customer scheduled the order for later." },
+          "schedule_at": { "type": "string", "nullable": true, "description": "When a scheduled order is due.", "example": "2026-08-02 07:32:21" },
+          "processing_time": { "type": "integer", "nullable": true, "description": "Preparation minutes promised by the restaurant.", "example": 20 },
+          "details_count": { "type": "integer", "description": "Number of line items.", "example": 1 },
+          "food_campaign": { "type": "integer", "enum": [0, 1] },
+          "subscription_id": { "type": "integer", "nullable": true },
+          "otp": { "type": "string", "nullable": true, "description": "Delivery verification code.", "example": "8526" },
+          "restaurant_id": { "type": "integer", "example": 3 },
+          "restaurant_name": { "type": "string", "nullable": true },
+          "restaurant_address": { "type": "string", "nullable": true },
+          "restaurant_phone": { "type": "string", "nullable": true },
+          "restaurant_lat": { "type": "string", "nullable": true },
+          "restaurant_lng": { "type": "string", "nullable": true },
+          "is_guest": { "type": "boolean", "description": "Guest checkout, so there is no customer account to message." },
+          "created_at": { "type": "string", "description": "When the customer placed the order.", "example": "2026-08-02 07:32:21" },
+          "updated_at": { "type": "string" },
+          "pending": { "type": "string", "nullable": true, "description": "Timestamp the order entered `pending`.", "example": "2026-08-02 07:32:21" },
+          "accepted": { "type": "string", "nullable": true },
+          "confirmed": { "type": "string", "nullable": true, "example": "2026-08-02 07:36:49" },
+          "processing": { "type": "string", "nullable": true, "example": "2026-08-02 07:38:12" },
+          "handover": { "type": "string", "nullable": true },
+          "picked_up": { "type": "string", "nullable": true },
+          "delivered": { "type": "string", "nullable": true },
+          "canceled": { "type": "string", "nullable": true },
+          "refund_requested": { "type": "string", "nullable": true },
+          "refunded": { "type": "string", "nullable": true },
+          "delivery_address": { "$ref": "#/components/schemas/DeliveryAddress" },
+          "customer": { "$ref": "#/components/schemas/Customer" },
+          "delivery_man": { "$ref": "#/components/schemas/DeliveryMan" },
+          "order_reference": { "$ref": "#/components/schemas/OrderReference" },
+          "payments": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Payment" },
+            "description": "Present for `partial_payment`. Index 0 is the wallet part, index 1 the remainder."
+          },
+          "order_proof_full_url": {
+            "type": "array",
+            "nullable": true,
+            "items": { "type": "string", "format": "uri" }
+          }
+        },
+        "example": {
+          "id": 100152,
+          "user_id": 1,
+          "order_amount": 53.45,
+          "coupon_discount_amount": 0,
+          "coupon_discount_title": "",
+          "payment_status": "unpaid",
+          "order_status": "processing",
+          "total_tax_amount": 2.45,
+          "payment_method": "cash_on_delivery",
+          "delivery_address_id": null,
+          "delivery_man_id": null,
+          "coupon_code": null,
+          "order_note": null,
+          "order_type": "delivery",
+          "restaurant_id": 3,
+          "created_at": "2026-08-02 07:32:21",
+          "updated_at": "2026-08-02 11:07:11",
+          "delivery_charge": 2,
+          "schedule_at": "2026-08-02 07:32:21",
+          "otp": "8526",
+          "pending": "2026-08-02 07:32:21",
+          "accepted": null,
+          "confirmed": "2026-08-02 07:36:49",
+          "processing": "2026-08-02 07:38:12",
+          "handover": null,
+          "picked_up": null,
+          "delivered": null,
+          "canceled": null,
+          "processing_time": 20,
+          "details_count": 1,
+          "cutlery": false,
+          "is_guest": false,
+          "delivery_address": {
+            "contact_person_name": "Sample Customer",
+            "contact_person_number": "+9725XXXXXXX",
+            "contact_person_email": "customer@example.com",
+            "address_type": "others",
+            "address": "14019 2nd St, Osseo, WI 54758, USA",
+            "floor": null,
+            "road": null,
+            "house": null,
+            "longitude": "-91.2262",
+            "latitude": "44.5727"
+          },
+          "customer": {
+            "id": 1,
+            "f_name": "Sample",
+            "l_name": "Customer",
+            "phone": "+9725XXXXXXX",
+            "email": "customer@example.com"
+          }
+        }
+      },
+
+      "OrderDetail": {
+        "type": "object",
+        "description": "One line item. `price` is the unit price before add-ons.",
+        "properties": {
+          "id": { "type": "integer" },
+          "food_id": { "type": "integer" },
+          "order_id": { "type": "integer" },
+          "price": { "type": "number", "format": "float", "example": 49 },
+          "quantity": { "type": "integer", "example": 1 },
+          "tax_amount": { "type": "number", "format": "float" },
+          "discount_on_food": { "type": "number", "format": "float" },
+          "discount_type": { "type": "string", "nullable": true },
+          "total_add_on_price": { "type": "number", "format": "float" },
+          "variant": { "type": "string", "nullable": true },
+          "item_campaign_id": { "type": "integer", "nullable": true },
+          "food_details": {
+            "type": "object",
+            "description": "Snapshot of the food at the time of ordering.",
+            "properties": {
+              "id": { "type": "integer" },
+              "name": { "type": "string", "example": "chesse pizza" },
+              "description": { "type": "string", "nullable": true },
+              "image_full_url": { "type": "string", "format": "uri", "nullable": true },
+              "veg": { "type": "integer", "enum": [0, 1] }
+            }
+          },
+          "variation": {
+            "type": "array",
+            "description": "Current-format variations. Each has a name and the chosen option levels.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "variation_id": { "type": "string" },
+                "name": { "type": "string", "example": "Size" },
+                "type": { "type": "string" },
+                "min": { "type": "string" },
+                "max": { "type": "string" },
+                "required": { "type": "string" },
+                "values": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": { "type": "string", "example": "Large" },
+                      "optionPrice": { "type": "string", "example": "10" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "add_ons": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string", "example": "Extra cheese" },
+                "price": { "type": "number", "format": "float", "example": 5 },
+                "quantity": { "type": "integer", "example": 1 }
+              }
+            }
+          }
+        }
+      },
+
+      "PaginatedOrders": {
+        "type": "object",
+        "properties": {
+          "total_size": { "type": "integer", "example": 115 },
+          "limit": { "type": "string", "example": "10" },
+          "offset": { "type": "string", "example": "1" },
+          "orders": { "type": "array", "items": { "$ref": "#/components/schemas/Order" } }
+        }
+      },
+
+      "DeliveryAddress": {
+        "type": "object",
+        "nullable": true,
+        "description": "Null for take-away and dine-in.",
+        "properties": {
+          "contact_person_name": { "type": "string" },
+          "contact_person_number": { "type": "string" },
+          "contact_person_email": { "type": "string", "nullable": true },
+          "address_type": { "type": "string", "example": "others" },
+          "address": { "type": "string" },
+          "road": { "type": "string", "nullable": true },
+          "house": { "type": "string", "nullable": true },
+          "floor": { "type": "string", "nullable": true },
+          "latitude": { "type": "string" },
+          "longitude": { "type": "string" }
+        }
+      },
+
+      "Customer": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "id": { "type": "integer" },
+          "f_name": { "type": "string" },
+          "l_name": { "type": "string" },
+          "phone": { "type": "string" },
+          "email": { "type": "string", "nullable": true },
+          "image_full_url": { "type": "string", "format": "uri", "nullable": true }
+        }
+      },
+
+      "DeliveryMan": {
+        "type": "object",
+        "nullable": true,
+        "description": "Null until a courier is assigned.",
+        "properties": {
+          "id": { "type": "integer" },
+          "f_name": { "type": "string" },
+          "l_name": { "type": "string" },
+          "phone": { "type": "string" },
+          "email": { "type": "string", "nullable": true },
+          "image_full_url": { "type": "string", "format": "uri", "nullable": true },
+          "zone_id": { "type": "integer" },
+          "active": { "type": "integer" },
+          "application_status": { "type": "string" }
+        }
+      },
+
+      "OrderReference": {
+        "type": "object",
+        "nullable": true,
+        "description": "Dine-in table and token numbers.",
+        "properties": {
+          "id": { "type": "integer" },
+          "order_id": { "type": "integer" },
+          "table_number": { "type": "string", "nullable": true },
+          "token_number": { "type": "string", "nullable": true }
+        }
+      },
+
+      "Payment": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "order_id": { "type": "integer" },
+          "amount": { "type": "number", "format": "float" },
+          "payment_status": { "type": "string", "enum": ["paid", "unpaid"] },
+          "payment_method": { "type": "string" }
+        }
+      },
+
+      "Profile": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "example": 3 },
+          "f_name": { "type": "string" },
+          "l_name": { "type": "string" },
+          "phone": { "type": "string" },
+          "email": { "type": "string" },
+          "order_count": { "type": "integer", "example": 115 },
+          "todays_order_count": { "type": "integer" },
+          "this_week_order_count": { "type": "integer" },
+          "this_month_order_count": { "type": "integer" },
+          "restaurants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "integer", "example": 3 },
+                "name": { "type": "string" },
+                "address": { "type": "string" },
+                "delivery_time": { "type": "string", "description": "Range in minutes, e.g. `20-30`.", "example": "20-30" },
+                "active": { "type": "boolean", "description": "False when the restaurant is temporarily closed." },
+                "self_delivery_system": { "type": "integer", "enum": [0, 1] }
+              }
+            }
+          }
+        }
+      },
+
+      "OrderEvent": {
+        "type": "object",
+        "description": "Webhook payload. Registration is admin-panel-only (contact GIZRA integrations to register your HTTPS endpoint and events) — there is no self-service registration endpoint.\n\nDelivered as `POST` with these headers:\n\n    Content-Type: application/json\n    X-Gizra-Event: order.created\n    X-Gizra-Delivery: 8f14e45f-ea2b-4c1a-9d0e-1c2b3a4d5e6f\n    X-Gizra-Timestamp: 1754130741\n    X-Gizra-Signature: sha256=<hex>\n\nVerification, in this order:\n\n1. Reject if `X-Gizra-Timestamp` is more than 300 seconds from your clock.\n2. Compute `HMAC-SHA256(signing_secret, \"<timestamp>.<raw request body>\")` and compare to `X-Gizra-Signature` using a constant-time comparison. `signing_secret` is generated per webhook when GIZRA registers it and shown once.\n3. Reject if you have already processed `X-Gizra-Delivery` — deliveries can repeat.\n4. Respond `2xx` within 5 seconds. Do the work asynchronously.\n\nOnly two event types are emitted: `order.created` (restaurant just confirmed a new order) and `order.status_changed` (any subsequent transition, including cancellations — check `data.order.order_status`). Non-2xx responses are retried with exponential backoff for 24 hours, after which the webhook is automatically disabled.",
+        "properties": {
+          "event": { "type": "string", "enum": ["order.created", "order.status_changed"] },
+          "delivery_id": { "type": "string", "format": "uuid", "description": "Same value as the X-Gizra-Delivery header. Dedupe on this." },
+          "created_at": { "type": "string", "format": "date-time" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "order_id": { "type": "integer", "example": 100152 },
+              "restaurant_id": { "type": "integer", "example": 3 },
+              "order_status": { "$ref": "#/components/schemas/OrderStatus" },
+              "order_amount": { "type": "number", "format": "float", "example": 53.45 },
+              "payment_method": { "type": "string", "example": "cash_on_delivery" }
+            }
+          }
+        },
+        "example": {
+          "event": "order.created",
+          "delivery_id": "8f14e45f-ea2b-4c1a-9d0e-1c2b3a4d5e6f",
+          "created_at": "2026-08-02T07:32:21+00:00",
+          "data": { "order_id": 100152, "restaurant_id": 3, "order_status": "confirmed", "order_amount": 53.45, "payment_method": "cash_on_delivery" }
+        }
+      }
+    }
+  },
+
+  "x-webhooks": {
+    "order.created": {
+      "post": {
+        "summary": "Sent when a restaurant confirms a new order",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/OrderEvent" }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Acknowledged" } }
+      }
+    },
+    "order.status_changed": {
+      "post": {
+        "summary": "Sent on every subsequent status transition, including cancellations",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/OrderEvent" }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Acknowledged" } }
+      }
+    }
+  }
+}

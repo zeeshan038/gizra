@@ -1,0 +1,16 @@
+vendor/
+node_modules/
+storage/logs/
+storage/framework/
+bootstrap/cache/
+public/build/
+public/storage/
+coverage/
+*.log
+*.cache
+*.min.js
+*.map
+composer.lock
+package-lock.json
+pnpm-lock.yaml
+yarn.lock

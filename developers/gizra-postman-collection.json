@@ -1,0 +1,483 @@
+{
+  "info": {
+    "_postman_id": "8f14e45f-ea2b-4c1a-9d0e-1c2b3a4d5e6f",
+    "name": "GIZRA Restaurant Integration API v1",
+    "description": "Ready-to-run collection for integrating an external POS with GIZRA.\n\n## Two ways to authenticate — two folders\n\n1. **Orders (pull into POS) / Order status** — account bearer token. Set `email`/`password`, run **Authentication > Login**, everything else picks up the token automatically. Fastest way to start testing.\n2. **Partner API (scoped key)** — `X-Gizra-Key` + HMAC signature, issued per-restaurant from the GIZRA admin panel (contact GIZRA integrations — there is no self-service endpoint to create one). Set `partner_key` and `partner_secret` in the collection variables; a folder-level pre-request script signs GET requests automatically. **Recommended for production** — scoped, revocable, never exposes the restaurant's password.\n\n## Typical flow\n\n    Login\n      -> Get Current Orders           (poll every 10-30s)\n      -> Get Order Details            (line items for the kitchen)\n      -> Update Status: confirmed     (accept the order)\n      -> Update Status: processing    (start cooking, send processing_time)\n      -> Update Status: handover      (ready for the courier)\n\nEvery request in this collection is live and implemented — nothing here is speculative.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "base_url", "value": "https://backend.gizra.app", "type": "string" },
+    { "key": "email", "value": "restaurant@example.com", "type": "string" },
+    { "key": "password", "value": "", "type": "string" },
+    { "key": "token", "value": "", "type": "string" },
+    { "key": "lang", "value": "he", "type": "string", "description": "en | he | ar | es | bn" },
+    { "key": "order_id", "value": "100152", "type": "string" },
+    { "key": "partner_key", "value": "", "type": "string", "description": "X-Gizra-Key, e.g. gzk_xxx — issued from the GIZRA admin panel" },
+    { "key": "partner_secret", "value": "", "type": "string", "description": "Shown once when the key is issued. Used only locally by the pre-request script to compute HMAC signatures, never sent as a header." }
+  ],
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "if (body.token) {",
+                  "    pm.collectionVariables.set('token', body.token);",
+                  "    console.log('Token stored.');",
+                  "} else {",
+                  "    console.warn('No token in response:', JSON.stringify(body));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/vendor/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "vendor", "login"]
+            },
+            "description": "Returns a bearer token. Stored into the `token` collection variable by the test script."
+          }
+        },
+        {
+          "name": "Get Profile (verify token)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/vendor/profile",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "vendor", "profile"]
+            },
+            "description": "Confirms the token works and returns the restaurant id, delivery time and order counters."
+          }
+        },
+        {
+          "name": "Get Config",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/api/v1/config",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "config"]
+            },
+            "description": "Currency symbol, time format, whether delivery verification OTP is required. Cache this."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Orders (pull into POS)",
+      "item": [
+        {
+          "name": "Get Current Orders  [POLL THIS]",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const orders = pm.response.json();",
+                  "pm.test('response is an array', () => pm.expect(orders).to.be.an('array'));",
+                  "const pending = orders.filter(o => o.order_status === 'pending');",
+                  "console.log(`${orders.length} active, ${pending.length} awaiting acceptance`);",
+                  "if (orders.length) { pm.collectionVariables.set('order_id', String(orders[0].id)); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/vendor/current-orders",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "vendor", "current-orders"]
+            },
+            "description": "Every order not yet finished. Returns a bare JSON array.\n\nPoll every 10-30 seconds. New orders arrive with `order_status: \"pending\"`.\n\nSets `order_id` to the first result so the following requests are runnable."
+          }
+        },
+        {
+          "name": "Get Order Details (line items)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/vendor/order-details?order_id={{order_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "vendor", "order-details"],
+              "query": [{ "key": "order_id", "value": "{{order_id}}" }]
+            },
+            "description": "What the kitchen has to make. The items array is at `order.details`."
+          }
+        },
+        {
+          "name": "Get Single Order",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/vendor/order?order_id={{order_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "vendor", "order"],
+              "query": [{ "key": "order_id", "value": "{{order_id}}" }]
+            },
+            "description": "Order header only. Use to re-check status without pulling the whole active list."
+          }
+        },
+        {
+          "name": "Get Order History",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/vendor/completed-orders?status=all&offset=1&limit=10",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "vendor", "completed-orders"],
+              "query": [
+                { "key": "status", "value": "all", "description": "all | delivered | refunded | canceled | failed" },
+                { "key": "offset", "value": "1", "description": "1-based PAGE number, not a row offset" },
+                { "key": "limit", "value": "10" }
+              ]
+            },
+            "description": "Finished orders. `offset` is a page number starting at 1."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Order status (push from POS)",
+      "description": "All of these are POST with multipart/form-data and `_method=put`. That is Laravel method spoofing — it is not a mistake.",
+      "item": [
+        {
+          "name": "1. Accept order  (pending -> confirmed)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "_method", "value": "put", "type": "text" },
+                { "key": "order_id", "value": "{{order_id}}", "type": "text" },
+                { "key": "status", "value": "confirmed", "type": "text" },
+                { "key": "processing_time", "value": "", "type": "text" },
+                { "key": "otp", "value": "", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/vendor/update-order-status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "vendor", "update-order-status"]
+            },
+            "description": "Restaurant accepts the order. The customer app shows it as confirmed."
+          }
+        },
+        {
+          "name": "2. Start cooking  (confirmed -> processing)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "_method", "value": "put", "type": "text" },
+                { "key": "order_id", "value": "{{order_id}}", "type": "text" },
+                { "key": "status", "value": "processing", "type": "text" },
+                { "key": "processing_time", "value": "20", "type": "text", "description": "Preparation time in whole minutes. Drives the customer's ETA." },
+                { "key": "otp", "value": "", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/vendor/update-order-status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "vendor", "update-order-status"]
+            },
+            "description": "Send `processing_time` in minutes. This is what the customer sees as the ETA."
+          }
+        },
+        {
+          "name": "3. Ready for courier  (processing -> handover)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "_method", "value": "put", "type": "text" },
+                { "key": "order_id", "value": "{{order_id}}", "type": "text" },
+                { "key": "status", "value": "handover", "type": "text" },
+                { "key": "processing_time", "value": "", "type": "text" },
+                { "key": "otp", "value": "", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/vendor/update-order-status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "vendor", "update-order-status"]
+            },
+            "description": "Food is ready and handed to the courier."
+          }
+        },
+        {
+          "name": "4. Delivered  (handover -> delivered)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "_method", "value": "put", "type": "text" },
+                { "key": "order_id", "value": "{{order_id}}", "type": "text" },
+                { "key": "status", "value": "delivered", "type": "text" },
+                { "key": "processing_time", "value": "", "type": "text" },
+                { "key": "otp", "value": "", "type": "text", "description": "Required when order_delivery_verification is true in /api/v1/config" }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/vendor/update-order-status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "vendor", "update-order-status"]
+            },
+            "description": "Only for self-delivery or take-away restaurants. Needs the customer's OTP when delivery verification is enabled."
+          }
+        },
+        {
+          "name": "Cancel order",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "_method", "value": "put", "type": "text" },
+                { "key": "order_id", "value": "{{order_id}}", "type": "text" },
+                { "key": "status", "value": "canceled", "type": "text" },
+                { "key": "reason", "value": "Item out of stock", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/vendor/update-order-status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "vendor", "update-order-status"]
+            },
+            "description": "Only permitted while the order is `pending`, and only if the platform allows restaurant cancellation. `reason` is required."
+          }
+        },
+        {
+          "name": "Get Cancellation Reasons",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/customer/order/cancellation-reasons?offset=1&limit=30&type=restaurant",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "customer", "order", "cancellation-reasons"],
+              "query": [
+                { "key": "offset", "value": "1" },
+                { "key": "limit", "value": "30" },
+                { "key": "type", "value": "restaurant" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Partner API (scoped key)",
+      "description": "Scoped, revocable auth via X-Gizra-Key — recommended for production. Set `partner_key` and `partner_secret` in the collection variables first (issued from the GIZRA admin panel; contact GIZRA integrations — there is no self-service creation endpoint).\n\nThe folder-level pre-request script below signs every GET request in this folder automatically. The write request (update-order-status) is multipart, and multipart signing must be done in your actual integration code over the exact bytes sent — see that request's description.",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.request.method === 'GET') {",
+              "    const ts = Math.floor(Date.now() / 1000).toString();",
+              "    const secret = pm.collectionVariables.get('partner_secret');",
+              "    const sig = 'sha256=' + CryptoJS.HmacSHA256(ts + '.', secret).toString(CryptoJS.enc.Hex);",
+              "    pm.request.headers.upsert({ key: 'X-Gizra-Key', value: pm.collectionVariables.get('partner_key') });",
+              "    pm.request.headers.upsert({ key: 'X-Gizra-Timestamp', value: ts });",
+              "    pm.request.headers.upsert({ key: 'X-Gizra-Signature', value: sig });",
+              "} else {",
+              "    pm.request.headers.upsert({ key: 'X-Gizra-Key', value: pm.collectionVariables.get('partner_key') });",
+              "    console.warn('This request is multipart — compute X-Gizra-Timestamp/X-Gizra-Signature over the exact raw body your HTTP client sends, not from this script. See the request description.');",
+              "}"
+            ]
+          }
+        }
+      ],
+      "item": [
+        {
+          "name": "Get Profile (partner key)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/partner/profile",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "partner", "profile"]
+            },
+            "description": "Requires scope `orders:read`. Auto-signed by the folder pre-request script."
+          }
+        },
+        {
+          "name": "Get Current Orders (partner key)  [POLL THIS]",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/partner/current-orders",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "partner", "current-orders"]
+            },
+            "description": "Requires scope `orders:read`. Rate limit: 120 requests/minute per key. Auto-signed by the folder pre-request script."
+          }
+        },
+        {
+          "name": "Get Order Details (partner key)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/partner/order-details?order_id={{order_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "partner", "order-details"],
+              "query": [{ "key": "order_id", "value": "{{order_id}}" }]
+            },
+            "description": "Requires scope `orders:read`. Auto-signed by the folder pre-request script."
+          }
+        },
+        {
+          "name": "Get Single Order (partner key)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/partner/order?order_id={{order_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "partner", "order"],
+              "query": [{ "key": "order_id", "value": "{{order_id}}" }]
+            },
+            "description": "Requires scope `orders:read`. Auto-signed by the folder pre-request script."
+          }
+        },
+        {
+          "name": "Get Order History (partner key)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/partner/completed-orders?status=all&offset=1&limit=10",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "partner", "completed-orders"],
+              "query": [
+                { "key": "status", "value": "all" },
+                { "key": "offset", "value": "1" },
+                { "key": "limit", "value": "10" }
+              ]
+            },
+            "description": "Requires scope `orders:read`. Auto-signed by the folder pre-request script."
+          }
+        },
+        {
+          "name": "Update Status: confirmed (partner key)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-localization", "value": "{{lang}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "_method", "value": "put", "type": "text" },
+                { "key": "order_id", "value": "{{order_id}}", "type": "text" },
+                { "key": "status", "value": "confirmed", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/partner/update-order-status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "partner", "update-order-status"]
+            },
+            "description": "Requires scope `orders:write`. Rate limit: 60 requests/minute per key.\n\n**Not auto-signed** — this body is multipart, and the folder script only signs GET requests (see the folder description). In your real integration, compute X-Gizra-Signature over the exact raw multipart body your HTTP client serializes, with the same timestamp-based scheme, then set X-Gizra-Key / X-Gizra-Timestamp / X-Gizra-Signature headers before sending. This request will return 401 as-is in Postman."
+          }
+        }
+      ]
+    }
+  ]
+}

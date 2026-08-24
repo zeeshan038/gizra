@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.gizra.customer",
+      "sha256_cert_fingerprints": [
+        "F1:1A:44:2A:ED:06:C7:D5:0A:64:B0:77:65:57:00:0B:1C:4A:CA:C0:97:1E:CB:EB:EC:46:B7:6C:F5:EF:45:98"
+      ]
+    }
+  }
+]

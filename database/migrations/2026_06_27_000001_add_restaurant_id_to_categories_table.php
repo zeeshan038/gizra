@@ -8,9 +8,11 @@ class AddRestaurantIdToCategoriesTable extends Migration
 {
     public function up()
     {
-        Schema::table('categories', function (Blueprint $table) {
-            $table->unsignedBigInteger('restaurant_id')->nullable()->after('id')->index();
-        });
+        if (!Schema::hasColumn('categories', 'restaurant_id')) {
+            Schema::table('categories', function (Blueprint $table) {
+                $table->unsignedBigInteger('restaurant_id')->nullable()->after('id')->index();
+            });
+        }
     }
 
     public function down()

@@ -92,6 +92,7 @@ class PaypalPaymentController extends Controller
             'UTF8out' => 'True',
             'Sign' => 'True',
             'tmp' => '3',
+            'PageLang' => 'HEB',
 
             'SuccessUrl' => route('hypay.success', ['payment_id' => $data->id]),
             'ErrorUrl' => route('hypay.failed', ['payment_id' => $data->id]),

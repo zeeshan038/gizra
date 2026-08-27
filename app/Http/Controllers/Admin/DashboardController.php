@@ -401,6 +401,7 @@ public function testPayment()
             'Sign'        => 'True',
             'tmp'         => '3',
             'MoreData'    => 'True',
+            'PageLang'    => 'HEB',
         ];
 
         // Build query string

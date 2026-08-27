@@ -662,6 +662,9 @@
                     <button class="btn btn-success btn-sm" id="lm-bulk-publish-btn" style="padding: 2px 10px; font-size: 12px;">
                         <i class="tio-publish"></i> {{ translate('Publish Selected') }}
                     </button>
+                    <button class="btn btn-danger btn-sm ml-1" id="lm-bulk-delete-btn" style="padding: 2px 10px; font-size: 12px;">
+                        <i class="tio-delete"></i> {{ translate('Delete Selected') }}
+                    </button>
                 </div>
             </div>
             <div class="lm-center-body" id="lm-items-body">
@@ -2170,6 +2173,29 @@
             loadItems();
         }).fail(function() {
             showToast('{{ translate("Bulk publish failed") }}', 'danger');
+        }).always(function() {
+            btn.prop('disabled', false);
+        });
+    });
+
+    $('#lm-bulk-delete-btn').on('click', function() {
+        const ids = [];
+        $('.lm-item-select:checked').each(function() {
+            ids.push($(this).data('id'));
+        });
+        if (!ids.length) {
+            showToast('{{ translate("No items selected") }}', 'warning');
+            return;
+        }
+        if (!confirm('{{ translate("Are you sure you want to delete the selected items?") }}')) return;
+        const btn = $(this);
+        btn.prop('disabled', true);
+        $.post(BASE + '/bulk-delete', { _token: CSRF, ids: ids }, function(res) {
+            showToast(res.message, 'success');
+            $('#lm-select-all').prop('checked', false);
+            loadItems();
+        }).fail(function() {
+            showToast('{{ translate("Bulk delete failed") }}', 'danger');
         }).always(function() {
             btn.prop('disabled', false);
         });

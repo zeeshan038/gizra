@@ -1662,7 +1662,6 @@ class FoodController extends Controller
         $priceIdx = array_search('price', $header);
         $typeIdx = array_search('item type', $header);
         $vegIdx = array_search('veg', $header);
-        $varIdx = array_search('variations', $header);
 
         if ($nameIdx === false || $priceIdx === false || $categoryIdx === false) {
             fclose($handle);
@@ -1675,9 +1674,7 @@ class FoodController extends Controller
             $itemName = trim($row[$nameIdx] ?? '');
             $itemDesc = trim($row[$descIdx] ?? '');
             $itemPrice = (float)trim($row[$priceIdx] ?? 0);
-            $itemType = strtolower(trim($row[$typeIdx] ?? 'simple'));
             $vegVal = strtolower(trim($row[$vegIdx] ?? 'non-veg'));
-            $varStr = trim($row[$varIdx] ?? '');
 
             if (!$itemName || !$catName) continue;
 
@@ -1687,8 +1684,7 @@ class FoodController extends Controller
                 'description' => $itemDesc,
                 'price' => max(0.01, $itemPrice),
                 'veg' => (str_contains($vegVal, 'veg') && !str_contains($vegVal, 'non')) ? 1 : 0,
-                'item_type' => $itemType,
-                'variations' => $varStr
+                'item_type' => 'simple'
             ];
         }
         fclose($handle);
@@ -1714,7 +1710,7 @@ class FoodController extends Controller
         $mimeType = $file->getMimeType();
         $base64Data = base64_encode(file_get_contents($file->getRealPath()));
 
-        $prompt = "You are a menu parsing expert. Extract all menu items, descriptions, prices, categories, and variation choices from the provided menu image/PDF.\nOutput a JSON object with a single key 'categories' containing an array of categories.\nEach category has:\n- 'name': category name\n- 'items': array of items. Each item must have:\n  - 'name': item name\n  - 'description': item description\n  - 'price': item base price (numeric)\n  - 'variations': array of variation groups (optional). Each variation group has:\n    - 'name': variation group name (e.g. 'Size')\n    - 'required': true/false\n    - 'type': 'single' or 'multi'\n    - 'values': array of values. Each value has:\n      - 'label': option name (e.g. 'Small')\n      - 'optionPrice': price adjustment (numeric, e.g. 1.50)\nOutput ONLY valid raw JSON conforming to this schema, without markdown formatting or code blocks.";
+        $prompt = "You are a menu parsing expert. Extract all menu items, descriptions, prices, and categories from the provided menu image/PDF. IGNORE ANY VARIATIONS OR OPTIONS (like size, add-ons, etc.) and only extract the base item details.\nOutput a JSON object with a single key 'categories' containing an array of categories.\nEach category has:\n- 'name': category name\n- 'items': array of items. Each item must have:\n  - 'name': item name\n  - 'description': item description\n  - 'price': item base price (numeric)\nOutput ONLY valid raw JSON conforming to this schema, without markdown formatting or code blocks.";
 
         $lastErr = '';
         $models = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-2.0-flash-001', 'gemini-flash-latest'];
@@ -1776,8 +1772,7 @@ class FoodController extends Controller
                     'description' => $itemData['description'] ?? '',
                     'price' => max(0.01, (float)($itemData['price'] ?? 0.01)),
                     'veg' => 0,
-                    'item_type' => isset($itemData['variations']) && count($itemData['variations']) > 0 ? 'variable' : 'simple',
-                    'variations_json' => $itemData['variations'] ?? null
+                    'item_type' => 'simple'
                 ];
             }
         }
@@ -1929,70 +1924,6 @@ class FoodController extends Controller
         $food->stock_type = 'unlimited';
         $food->save();
 
-        if ($request->item_type === 'variable' && $request->variations && is_string($request->variations)) {
-            $groups = explode('|', $request->variations);
-            foreach ($groups as $group) {
-                $group = trim($group);
-                if (!$group) continue;
-                
-                $parts = explode(':', $group, 2);
-                if (count($parts) < 2) continue;
-                
-                $groupName = trim($parts[0]);
-                $optionsStr = trim($parts[1]);
-                
-                $variation = new Variation();
-                $variation->food_id = $food->id;
-                $variation->name = $groupName;
-                $variation->type = 'single';
-                $variation->min = 0;
-                $variation->max = 0;
-                $variation->is_required = false;
-                $variation->save();
-                
-                $options = explode(',', $optionsStr);
-                foreach ($options as $opt) {
-                    $optParts = explode('=', $opt, 2);
-                    $optLabel = trim($optParts[0]);
-                    $optPrice = (float)trim($optParts[1] ?? 0);
-                    
-                    if (!$optLabel) continue;
-                    
-                    $varOption = new VariationOption();
-                    $varOption->food_id = $food->id;
-                    $varOption->variation_id = $variation->id;
-                    $varOption->option_name = $optLabel;
-                    $varOption->option_price = $optPrice;
-                    $varOption->stock_type = 'unlimited';
-                    $varOption->total_stock = 0;
-                    $varOption->save();
-                }
-            }
-        }
-        elseif ($request->item_type === 'variable' && $request->variations_json && is_array($request->variations_json)) {
-            foreach ($request->variations_json as $opt) {
-                $variation = new Variation();
-                $variation->food_id = $food->id;
-                $variation->name = $opt['name'] ?? 'Choice';
-                $variation->type = ($opt['type'] ?? 'single') === 'multi' ? 'multi' : 'single';
-                $variation->min = $variation->type === 'multi' ? 1 : 0;
-                $variation->max = $variation->type === 'multi' ? count($opt['values'] ?? []) : 0;
-                $variation->is_required = (bool)($opt['required'] ?? false);
-                $variation->save();
-
-                foreach ($opt['values'] ?? [] as $val) {
-                    $varOption = new VariationOption();
-                    $varOption->food_id = $food->id;
-                    $varOption->variation_id = $variation->id;
-                    $varOption->option_name = $val['label'] ?? 'Option';
-                    $varOption->option_price = (float)($val['optionPrice'] ?? 0);
-                    $varOption->stock_type = 'unlimited';
-                    $varOption->total_stock = 0;
-                    $varOption->save();
-                }
-            }
-        }
-
         return response()->json(['success' => true]);
     }
 
@@ -2015,6 +1946,22 @@ class FoodController extends Controller
         return response()->json(['message' => 'Selected draft items published successfully.']);
     }
 
+    public function listingManagerBulkDelete(Request $request)
+    {
+        $request->validate([
+            'ids' => 'required|array',
+            'ids.*' => 'exists:food,id'
+        ]);
+
+        $restaurant_id = Helpers::get_restaurant_id();
+
+        Food::where('restaurant_id', $restaurant_id)
+            ->whereIn('id', $request->ids)
+            ->delete();
+
+        return response()->json(['message' => 'Selected items deleted successfully.']);
+    }
+
     public function listingManagerImportPDF(Request $request)
     {
         $request->validate([
@@ -2031,7 +1978,7 @@ class FoodController extends Controller
         $mimeType = $file->getMimeType();
         $base64Data = base64_encode(file_get_contents($file->getRealPath()));
 
-        $prompt = "You are a menu parsing expert. Extract all menu items, descriptions, prices, categories, and variation choices from the provided menu image/PDF.\nOutput a JSON object with a single key 'categories' containing an array of categories.\nEach category has:\n- 'name': category name\n- 'items': array of items. Each item must have:\n  - 'name': item name\n  - 'description': item description\n  - 'price': item base price (numeric)\n  - 'variations': array of variation groups (optional). Each variation group has:\n    - 'name': variation group name (e.g. 'Size')\n    - 'required': true/false\n    - 'type': 'single' or 'multi'\n    - 'values': array of values. Each value has:\n      - 'label': option name (e.g. 'Small')\n      - 'optionPrice': price adjustment (numeric, e.g. 1.50)\nOutput ONLY valid raw JSON conforming to this schema, without markdown formatting or code blocks.";
+        $prompt = "You are a menu parsing expert. Extract all menu items, descriptions, prices, and categories from the provided menu image/PDF. IGNORE ANY VARIATIONS OR OPTIONS (like size, add-ons, etc.) and only extract the base item details.\nCRITICAL INSTRUCTION: If an item or category name is provided in multiple languages (e.g. Hebrew and English separated by a slash '/'), you MUST split them and create a separate item/category entry for each language. For example, if a menu item is 'Black Tea / תה שחור', you must create two separate items in the JSON: one named 'Black Tea' and another named 'תה שחור', both with the same price and details.\nOutput a JSON object with a single key 'categories' containing an array of categories.\nEach category has:\n- 'name': category name\n- 'items': array of items. Each item must have:\n  - 'name': item name\n  - 'description': item description\n  - 'price': item base price (numeric)\nOutput ONLY valid raw JSON conforming to this schema, without markdown formatting or code blocks.";
 
         $lastErr = '';
         $models = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-2.0-flash-001', 'gemini-flash-latest'];
@@ -2126,31 +2073,6 @@ class FoodController extends Controller
                 }
 
                 $food->save();
-
-                // Save variations
-                if (isset($itemData['variations']) && is_array($itemData['variations'])) {
-                    foreach ($itemData['variations'] as $opt) {
-                        $variation = new Variation();
-                        $variation->food_id = $food->id;
-                        $variation->name = $opt['name'] ?? 'Choice';
-                        $variation->type = ($opt['type'] ?? 'single') === 'multi' ? 'multi' : 'single';
-                        $variation->min = $variation->type === 'multi' ? 1 : 0;
-                        $variation->max = $variation->type === 'multi' ? count($opt['values'] ?? []) : 0;
-                        $variation->is_required = (bool)($opt['required'] ?? false);
-                        $variation->save();
-
-                        foreach ($opt['values'] ?? [] as $val) {
-                            $varOption = new VariationOption();
-                            $varOption->food_id = $food->id;
-                            $varOption->variation_id = $variation->id;
-                            $varOption->option_name = $val['label'] ?? 'Option';
-                            $varOption->option_price = (float)($val['optionPrice'] ?? 0);
-                            $varOption->stock_type = 'unlimited';
-                            $varOption->total_stock = 0;
-                            $varOption->save();
-                        }
-                    }
-                }
 
                 $imported++;
             }

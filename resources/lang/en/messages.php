@@ -6664,4 +6664,6 @@
   'No items parsed from file. Please verify content format.' => 'No items parsed from file. Please verify content format.',
   'Adding items to drafts...' => 'Adding items to drafts...',
   'Notified Nearby Drivers' => 'Notified Nearby Drivers',
+  'Delete Selected' => 'Delete Selected',
+  'Bulk delete failed' => 'Bulk delete failed',
 );

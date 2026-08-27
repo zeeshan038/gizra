@@ -119,6 +119,7 @@ Route::group(['namespace' => 'Vendor', 'as' => 'vendor.'], function () {
             Route::post('ai-image', 'FoodController@listingManagerAiImage')->name('ai-image');
             Route::post('approve/{id}', 'FoodController@listingManagerApprove')->name('approve');
             Route::post('bulk-publish', 'FoodController@listingManagerBulkPublish')->name('bulk-publish');
+            Route::post('bulk-delete', 'FoodController@listingManagerBulkDelete')->name('bulk-delete');
             Route::post('parse-csv', 'FoodController@listingManagerParseCSV')->name('parse-csv');
             Route::post('parse-pdf', 'FoodController@listingManagerParsePDF')->name('parse-pdf');
             Route::post('save-imported-item', 'FoodController@listingManagerSaveImportedItem')->name('save-imported-item');

@@ -6666,4 +6666,5 @@
   'Notified Nearby Drivers' => 'Notified Nearby Drivers',
   'Delete Selected' => 'Delete Selected',
   'Bulk delete failed' => 'Bulk delete failed',
+  'Are you sure you want to delete the selected items?' => 'Are you sure you want to delete the selected items?',
 );

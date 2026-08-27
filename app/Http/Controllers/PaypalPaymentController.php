@@ -91,7 +91,7 @@ class PaypalPaymentController extends Controller
             'UTF8' => 'True',
             'UTF8out' => 'True',
             'Sign' => 'True',
-            'tmp' => '3',
+            'tmp' => '8', // Template 8 is the modern responsive template that supports Google Pay and Apple Pay
             'PageLang' => 'HEB',
 
             'SuccessUrl' => route('hypay.success', ['payment_id' => $data->id]),

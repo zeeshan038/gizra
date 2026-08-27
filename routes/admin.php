@@ -428,7 +428,7 @@ Route::group(['namespace' => 'Admin', 'as' => 'admin.'], function () {
             Route::get('theme-settings', 'BusinessSettingsController@theme_settings')->name('theme-settings');
             Route::POST('theme-settings-update', 'BusinessSettingsController@update_theme_settings')->name('theme-settings-update');
             Route::get('app-settings', 'BusinessSettingsController@app_settings')->name('app-settings');
-            Route::POST('app-settings', 'BusinessSettingsController@update_app_settings')->name('app-settings');
+            Route::POST('app-settings', 'BusinessSettingsController@update_app_settings')->name('app-settings-post');
             Route::get('landing-page-settings/{tab?}', 'BusinessSettingsController@landing_page_settings')->name('landing-page-settings');
             Route::POST('landing-page-settings/{tab}', 'BusinessSettingsController@update_landing_page_settings')->name('landing-page-settings');
             Route::DELETE('landing-page-settings/{tab}/{key}', 'BusinessSettingsController@delete_landing_page_settings')->name('landing-page-settings-delete');

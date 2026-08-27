@@ -84,7 +84,7 @@ Route::group(['namespace' => 'Admin', 'as' => 'admin.'], function () {
             // Route::post('search', 'FoodController@search')->name('search');
             Route::post('search-restaurant', 'FoodController@search_vendor')->name('search-restaurant');
             Route::get('reviews', 'FoodController@review_list')->name('reviews');
-            Route::post('restaurant-food-export', 'FoodController@restaurant_food_export')->name('restaurant-food-export');
+            Route::post('restaurant-food-export', 'FoodController@restaurant_food_export')->name('restaurant-food-export-post');
             Route::post('update-stock', 'FoodController@updateStock')->name('updateStock');
             Route::get('restaurant-food-export/{type}/{restaurant_id}', 'FoodController@restaurant_food_export')->name('restaurant-food-export');
 

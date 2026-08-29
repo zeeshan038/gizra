@@ -234,6 +234,15 @@ Route::get('/test', function () {
     return view('errors.404');
 });
 
+Route::get('/api-docs.json', function () {
+    return response()->file(public_path('api-docs.json'), [
+        'Content-Type' => 'application/json',
+        'Access-Control-Allow-Origin' => '*'
+    ]);
+})->withoutMiddleware([\App\Http\Middleware\VerifyCsrfToken::class]);
+
+Route::view('/swagger', 'swagger')->withoutMiddleware([\App\Http\Middleware\VerifyCsrfToken::class]);
+
 Route::view('/swagger', 'swagger')->withoutMiddleware([\App\Http\Middleware\VerifyCsrfToken::class]);
 
 Route::get('authentication-failed', function () {

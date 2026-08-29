@@ -15,7 +15,7 @@ class PaypalPaymentController extends Controller
 {
     use Processor;
 
-    // 🔐 Static Credentials
+    // Static Credentials
     private $base_url = 'https://pay.hyp.co.il/p/';
     private $masof = '4502319132';
     private $passP = '2LT1VTXNTA';
@@ -26,11 +26,11 @@ class PaypalPaymentController extends Controller
     private const SUCCESS_CCODES = ['0', '600', '700', '800'];
 
     /**
-     * 🚀 STEP 1: Create Payment
+     * STEP 1: Create Payment
      */
     public function payment(Request $request)
     {
-        // ── HYP DEBUG (temporary) ─────────────────────────────────────────────
+        // ── HYP DEBUG (temporary)
         Log::channel('daily')->info('[HYP DEBUG] === Incoming request to /payment/hyperpay/pay ===', [
             'full_url' => $request->fullUrl(),
             'method' => $request->method(),
@@ -42,7 +42,6 @@ class PaypalPaymentController extends Controller
             'REMOTE_ADDR' => $request->ip(),
             'all_headers' => $request->headers->all(),
         ]);
-        // ─────────────────────────────────────────────────────────────────────
 
         $validator = Validator::make($request->all(), [
             'payment_id' => 'required|uuid'
@@ -91,7 +90,7 @@ class PaypalPaymentController extends Controller
             'UTF8' => 'True',
             'UTF8out' => 'True',
             'Sign' => 'True',
-            'Template' => '4', // Template 4 is the standard E-commerce template
+            'Template' => '4', 
             'PageLang' => 'HEB',
 
             'SuccessUrl' => route('hypay.success', ['payment_id' => $data->id]),
@@ -100,7 +99,7 @@ class PaypalPaymentController extends Controller
 
         $response = Http::get($this->base_url, $params);
 
-        // ── HYP DEBUG (temporary) ─────────────────────────────────────────────
+        // ── HYP DEBUG (temporary) 
         Log::channel('daily')->info('[HYP DEBUG] === HYP APISign request/response ===', [
             'request_url' => $this->base_url . '?' . http_build_query($params),
             'request_params' => $params,
@@ -121,12 +120,11 @@ class PaypalPaymentController extends Controller
 
         $paymentUrl = $this->base_url . '?' . http_build_query($signedParams);
 
-        // ── HYP DEBUG (temporary) ─────────────────────────────────────────────
+        // ── HYP DEBUG (temporary)
         Log::channel('daily')->info('[HYP DEBUG] === Redirecting browser to HYP payment page ===', [
             'payment_url' => $paymentUrl,
             'signed_params' => $signedParams,
         ]);
-        // ─────────────────────────────────────────────────────────────────────
 
         return Redirect::away($paymentUrl);
     }

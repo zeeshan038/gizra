@@ -90,7 +90,7 @@ class PaypalPaymentController extends Controller
             'UTF8' => 'True',
             'UTF8out' => 'True',
             'Sign' => 'True',
-            'Template' => '4', 
+            'Template' => '4',
             'PageLang' => 'HEB',
 
             'SuccessUrl' => route('hypay.success', ['payment_id' => $data->id]),
@@ -399,14 +399,10 @@ class PaypalPaymentController extends Controller
             $ourHost = parse_url(config('app.url'), PHP_URL_HOST);
             $redirectHost = parse_url($redirectUrl, PHP_URL_HOST);
 
-            // If redirect points back to our own host, serve HTML directly.
             if ($redirectHost === $ourHost) {
                 return $this->htmlResultPage($flag);
             }
 
-            // For app deep links (e.g. gizraapp://), use JS redirect.
-            // HTTP 302 to custom schemes is unreliable in webviews;
-            // JS location change is intercepted by shouldOverrideUrlLoading / WKNavigationDelegate.
             $scheme = parse_url($redirectUrl, PHP_URL_SCHEME);
             if (!in_array($scheme, ['http', 'https'])) {
                 $safeUrl = htmlspecialchars($redirectUrl, ENT_QUOTES, 'UTF-8');

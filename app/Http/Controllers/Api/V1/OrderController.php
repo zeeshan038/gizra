@@ -1283,6 +1283,11 @@ class OrderController extends Controller
 
         $restaurant = Restaurant::with(['discount', 'restaurant_sub','restaurant_config'])->selectRaw('*, IF(((select count(*) from `restaurant_schedule` where `restaurants`.`id` = `restaurant_schedule`.`restaurant_id` and `restaurant_schedule`.`day` = '.$schedule_at->format('w').' and `restaurant_schedule`.`opening_time` < "'.$schedule_at->format('H:i:s').'" and `restaurant_schedule`.`closing_time` >"'.$schedule_at->format('H:i:s').'") > 0), true, false) as open')->where('id', $request->restaurant_id)->first();
 
+        if ($restaurant && !$restaurant->schedule_order) {
+            $request->merge(['schedule_at' => null]);
+            $schedule_at = now();
+        }
+
         $response = match (true) {
             !$restaurant => [
                 'code' => 'restaurant',
@@ -1340,11 +1345,13 @@ class OrderController extends Controller
                 'message' =>  'Take_away_is_disabled',
                 'status' => 403
             ],
+            /*
             $request->order_type != 'dine_in' && ((($settings['instant_order'] ?? 0) != 1 ||  $restaurant->restaurant_config?->instant_order != 1 ) && !$request->schedule_at && !$request->subscription_order)   => [
                 'code' => 'instant_order',
                 'message' => 'instant_order_is_not_available_for_now!',
                 'status' => 403
             ],
+            */
             ($settings['dine_in_order_option'] ?? 0) == 0 && $request->order_type == 'dine_in' => [
                 'code' => 'dine_in',
                 'message' =>  'Dine_in_is_disabled',
@@ -1356,7 +1363,7 @@ class OrderController extends Controller
                 'status' => 403
             ],
 
-            $request->schedule_at && $schedule_at < now() => [
+            $request->schedule_at && $schedule_at < now()->subMinutes(5) => [
                 'code' => 'order_time',
                 'message' =>  'you_can_not_schedule_a_order_in_past',
                 'status' => 403

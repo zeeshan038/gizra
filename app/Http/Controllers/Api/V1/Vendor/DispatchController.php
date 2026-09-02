@@ -84,8 +84,11 @@ class DispatchController extends Controller
             $order->user_id       = $customer->id;
             $order->restaurant_id = $restaurant->id;
             $order->order_type    = 'delivery';
-            $order->order_status  = 'pending';
+            $order->order_status  = 'confirmed';
             $order->pending       = now();
+            $order->confirmed     = now();
+            $order->accepted      = now();
+            $order->schedule_at   = now();
 
             // The restaurant absorbs the delivery fee, so the customer pays the
             // order total only and that is what the driver collects.

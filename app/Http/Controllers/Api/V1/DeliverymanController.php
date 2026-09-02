@@ -116,7 +116,6 @@ class DeliverymanController extends Controller
             'l_name' => 'required',
             'email' => 'required|unique:delivery_men,email,'.$dm->id,
             'password' => ['nullable', Password::min(8)->mixedCase()->letters()->numbers()->symbols()->uncompromised()],
-
             'image' => 'nullable|max:2048',
         ], [
             'f_name.required' => translate('First name is required!'),

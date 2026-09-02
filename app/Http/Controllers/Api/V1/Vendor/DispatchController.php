@@ -95,7 +95,7 @@ class DispatchController extends Controller
             // The restaurant absorbs the delivery fee, so the customer pays the
             // order total only and that is what the driver collects.
             $order->order_amount = round((float) $request['order_amount'], 2);
-            $order->delivery_charge = 0;
+            $order->delivery_charge = round((float) $request['delivery_fee'], 2);
             $order->original_delivery_charge = round((float) $request['delivery_fee'], 2);
 
             // Set explicitly rather than left to the column defaults. The

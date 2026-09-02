@@ -76,11 +76,7 @@ class DispatchController extends Controller
             $customer = $this->walk_in_customer($restaurant);
 
             $order = new Order();
-            // Always above the current maximum. The stock POS routine derives
-            // the id from a row count, which can land below max once any order
-            // has been deleted.
             $order->id = max(100000, (int) Order::max('id')) + 1;
-
             $order->user_id       = $customer->id;
             $order->restaurant_id = $restaurant->id;
             $order->order_type    = 'delivery';

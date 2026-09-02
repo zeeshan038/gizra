@@ -229,7 +229,10 @@ class DeliverymanController extends Controller
         }
 
         if(isset($dm->vehicle_id )){
-            $orders = $orders->where('vehicle_id',$dm->vehicle_id);
+            $orders = $orders->where(function($query) use ($dm) {
+                $query->where('vehicle_id', $dm->vehicle_id)
+                      ->orWhere('is_manual_dispatch', 1);
+            });
         }
         $orders = $orders->delivery()
         ->OrderScheduledIn(30)

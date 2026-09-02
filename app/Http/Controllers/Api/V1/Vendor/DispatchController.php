@@ -118,8 +118,7 @@ class DispatchController extends Controller
             $order->payment_method = 'cash_on_delivery';
             $order->payment_status = $prepaid ? 'paid' : 'unpaid';
 
-            // Driver matching runs off the restaurant's zone; the submitted zone
-            // is recorded for reporting only.
+    
             $order->zone_id = $request['zone_id'] ? (int) $request['zone_id'] : $restaurant->zone_id;
 
             $order->delivery_address = json_encode([

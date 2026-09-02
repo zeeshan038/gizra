@@ -94,16 +94,20 @@ class DispatchController extends Controller
 
             // The restaurant absorbs the delivery fee, so the customer pays the
             // order total only and that is what the driver collects.
-            $order->order_amount = round((float) $request['order_amount'], 2);
-            $order->delivery_charge = round((float) $request['delivery_fee'], 2);
-            $order->original_delivery_charge = round((float) $request['delivery_fee'], 2);
+            // Calculate tax (10% by default, or use what's sent in the request). Applied on item price only.
+            $tax_percentage = $request->has('tax') ? (float) $request['tax'] : 10;
+            $item_price = (float) $request['order_amount'];
+            $delivery_fee = (float) $request['delivery_fee'];
+            
+            $tax_amount = round($item_price * ($tax_percentage / 100), 2);
 
-            // Set explicitly rather than left to the column defaults. The
-            // commission engine reads every one of these, and the settlement
-            // observer assumes they are zero when it recomputes the base.
-            // restaurant_discount_amount in particular is NOT NULL with no
-            // default, so omitting it fails the insert outright.
-            $order->total_tax_amount = 0;
+            // Final total is Item Price + Delivery Fee + Tax
+            $order->order_amount = round($item_price + $delivery_fee + $tax_amount, 2);
+            $order->delivery_charge = round($delivery_fee, 2);
+            $order->original_delivery_charge = round($delivery_fee, 2);
+
+            // Set explicitly rather than left to the column defaults.
+            $order->total_tax_amount = $tax_amount;
             $order->restaurant_discount_amount = 0;
             $order->coupon_discount_amount = 0;
             $order->dm_tips = 0;

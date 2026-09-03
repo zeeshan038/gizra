@@ -369,6 +369,41 @@
                         </div>
                     </div>
 
+                    <div class="col-lg-4 col-sm-6">
+                        <div class="form-group m-0">
+                            <label
+                                class="toggle-switch toggle-switch-sm d-flex justify-content-between border rounded px-3 form-control"
+                                for="manual_dispatch">
+                                <span class="pr-2 text-capitalize">
+                                    {{ translate('messages.manual_dispatch') }}:
+                                    <span data-toggle="tooltip" data-placement="right"
+                                        data-original-title="{{ translate('messages.manual_dispatch_hint') }}"
+                                        class="input-label-secondary"><img
+                                            src="{{ dynamicAsset('public/assets/admin/img/info-circle.svg') }}"
+                                            alt="i"></span>
+                                </span>
+                                <input type="checkbox" class="toggle-switch-input dynamic-checkbox"
+                                    data-id="manual_dispatch" data-type="status"
+                                    data-image-on='{{ dynamicAsset('/public/assets/admin/img/modal') }}/veg-on.png'
+                                    data-image-off="{{ dynamicAsset('/public/assets/admin/img/modal') }}/veg-off.png"
+                                    data-title-on="{{ translate('Want_to_enable_the') }} <strong>{{ translate('manual_dispatch') }}</strong> {{ translate('option') }} ?"
+                                    data-title-off="{{ translate('Want_to_disable_the') }} <strong>{{ translate('manual_dispatch') }}</strong> {{ translate('option') }} ?"
+                                    data-text-on="<p>{{ translate('If_enabled,_restaurant_can_request_gizra_driver.') }}</p>"
+                                    data-text-off="<p>{{ translate('If_disabled,_restaurant_can_not_request_gizra_driver.') }}</p>"
+                                    id="manual_dispatch"
+                                    {{ $restaurant->manual_dispatch ? 'checked' : '' }}>
+                                <span class="toggle-switch-label">
+                                    <span class="toggle-switch-indicator"></span>
+                                </span>
+                            </label>
+                            <form
+                                action="{{ route('vendor.business-settings.toggle-settings', [$restaurant->id, $restaurant->manual_dispatch ? 0 : 1, 'manual_dispatch']) }}"
+                                method="get" id="manual_dispatch_form">
+                            </form>
+                        </div>
+                    </div>
+
+
                     @if ($data)
                         <div class="col-lg-4 col-sm-6">
                             <div class="form-group m-0">

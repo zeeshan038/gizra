@@ -752,6 +752,7 @@ class Helpers
                 $positive_rating = RestaurantLogic::calculate_positive_rating($item['rating']);
 
                 $item['positive_rating'] = (int) $positive_rating['rating'];
+                $item['manual_dispatch'] = (bool) $item->manual_dispatch;
 
 
                 $item['customer_order_date'] =   (int) $item?->restaurant_config?->customer_order_date;
@@ -819,6 +820,7 @@ class Helpers
 
             $positive_rating = RestaurantLogic::calculate_positive_rating($data['rating']);
             $data['positive_rating'] = (int) $positive_rating['rating'];
+            $data['manual_dispatch'] = (bool) $data->manual_dispatch;
 
             $data['customer_order_date'] =   (int) $data?->restaurant_config?->customer_order_date;
             $data['customer_date_order_sratus'] =   (bool) $data?->restaurant_config?->customer_date_order_sratus;

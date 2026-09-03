@@ -58,7 +58,7 @@ class DispatchController extends Controller
 
         $restaurant = $request->vendor->restaurants[0];
 
-        if (!in_array((int) $restaurant->id, $this->allowed_restaurants(), true)) {
+        if (!(int) $restaurant->manual_dispatch && !in_array((int) $restaurant->id, $this->allowed_restaurants(), true)) {
             return response()->json([
                 'errors' => [
                     ['code' => 'manual_dispatch', 'message' => 'Manual driver dispatch is not enabled for this restaurant.'],

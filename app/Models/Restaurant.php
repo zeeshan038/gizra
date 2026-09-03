@@ -38,6 +38,7 @@ class Restaurant extends Model
         'free_delivery_distance_status'=>'boolean',
         'pos_system'=>'boolean',
         'self_delivery_system'=>'integer',
+        'manual_dispatch'=>'boolean',
         'open'=>'integer',
         'gst_code'=>'string',
         'free_delivery_distance_value'=>'float',

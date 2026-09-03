@@ -6668,4 +6668,5 @@
   'Bulk delete failed' => 'Bulk delete failed',
   'Are you sure you want to delete the selected items?' => 'Are you sure you want to delete the selected items?',
   'Forbidden' => 'Forbidden',
+  'If_disabled,_restaurant_can_not_request_gizra_driver.' => 'If disabled, restaurant can not request gizra driver.',
 );

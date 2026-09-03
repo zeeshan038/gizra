@@ -375,9 +375,9 @@
                                 class="toggle-switch toggle-switch-sm d-flex justify-content-between border rounded px-3 form-control"
                                 for="manual_dispatch">
                                 <span class="pr-2 text-capitalize">
-                                    {{ translate('messages.manual_dispatch') }}:
+                                    Manual Dispatch:
                                     <span data-toggle="tooltip" data-placement="right"
-                                        data-original-title="{{ translate('messages.manual_dispatch_hint') }}"
+                                        data-original-title="Allow this restaurant to manually request Gizra drivers."
                                         class="input-label-secondary"><img
                                             src="{{ dynamicAsset('public/assets/admin/img/info-circle.svg') }}"
                                             alt="i"></span>

@@ -388,11 +388,10 @@
                                 for="manual_dispatch">
                                 <span class="pr-2 d-flex">
                                     <span class="line--limit-1">
-                                        <?php echo e(translate('messages.manual_dispatch')); ?>
-
+                                        Manual Dispatch
                                     </span>
                                     <span data-toggle="tooltip" data-placement="right"
-                                          data-original-title='<?php echo e(translate("messages.manual_dispatch_hint")); ?>'
+                                          data-original-title='Allow this restaurant to manually request Gizra drivers.'
                                           class="input-label-secondary">
                                         <i class="tio-info-outined"></i>
                                     </span>

@@ -163,30 +163,46 @@ class DispatchController extends Controller
             $order = $order->fresh();
             Helpers::send_order_notification($order);
             
+            $order->load('zone:id,deliveryman_wise_topic');
             $deliveryman_push_notification_status = Helpers::getNotificationStatusData('deliveryman','deliveryman_order_notification');
             
             // Explicitly push to drivers since send_order_notification skips confirmed COD orders
-            // when the order_confirmation_model is set to 'deliveryman'.
-            if ($order->zone && $deliveryman_push_notification_status?->push_notification_status == 'active') {
-                info("Manual dispatch: Sending driver push for order {$order->id} in zone {$order->zone_id}");
-                
+            if ($deliveryman_push_notification_status?->push_notification_status == 'active' && $order->zone_id) {
                 $push_data = [
                     'title' => translate('messages.order_push_title'),
                     'description' => translate('messages.new_order_push_description'),
                     'order_id' => $order->id,
                     'image' => '',
                 ];
-                
-                if ($order->vehicle_id) {
-                    $vehicle_topic = 'delivery_man_' . $order->zone_id . '_' . $order->vehicle_id;
-                    Helpers::send_push_notif_to_topic($push_data, $vehicle_topic, 'order_request');
-                    info("Manual dispatch: Push sent to vehicle topic {$vehicle_topic}");
+
+                $zoneTopic = $order->zone?->deliveryman_wise_topic ?? ('zone_' . $order->zone_id . '_delivery_man');
+
+                // Dispatch orders have no vehicle_id — notify ALL vehicle topics in this zone
+                $vehicleIds = \App\Models\DeliveryMan::active()
+                    ->where('zone_id', $order->zone_id)
+                    ->whereNotNull('vehicle_id')
+                    ->distinct()
+                    ->pluck('vehicle_id');
+
+                foreach ($vehicleIds as $vehicleId) {
+                    Helpers::send_push_notif_to_topic(
+                        $push_data,
+                        'delivery_man_' . $order->zone_id . '_' . $vehicleId,
+                        'order_request'
+                    );
                 }
-                $zone_topic = 'zone_' . $order->zone_id . '_delivery_man';
-                Helpers::send_push_notif_to_topic($push_data, $zone_topic, 'order_request');
-                info("Manual dispatch: Push sent to zone topic {$zone_topic}");
+
+                // Also notify drivers with no vehicle (zone-wise topic)
+                Helpers::send_push_notif_to_topic($push_data, $zoneTopic, 'order_request');
+
+                \Log::info('[DISPATCH PUSH]', [
+                    'order_id' => $order->id,
+                    'zone_id' => $order->zone_id,
+                    'zone_topic' => $zoneTopic,
+                    'vehicle_topics' => $vehicleIds->toArray(),
+                ]);
             } else {
-                info("Manual dispatch: Driver push skipped. Either zone is missing or notifications are disabled.");
+                \Log::info("Manual dispatch: Driver push skipped. Either zone is missing or notifications are disabled.");
             }
             
         } catch (\Exception $e) {

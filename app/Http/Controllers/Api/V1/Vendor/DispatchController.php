@@ -168,6 +168,8 @@ class DispatchController extends Controller
             // Explicitly push to drivers since send_order_notification skips confirmed COD orders
             // when the order_confirmation_model is set to 'deliveryman'.
             if ($order->zone && $deliveryman_push_notification_status?->push_notification_status == 'active') {
+                info("Manual dispatch: Sending driver push for order {$order->id} in zone {$order->zone_id}");
+                
                 $push_data = [
                     'title' => translate('messages.order_push_title'),
                     'description' => translate('messages.new_order_push_description'),
@@ -176,9 +178,15 @@ class DispatchController extends Controller
                 ];
                 
                 if ($order->vehicle_id) {
-                    Helpers::send_push_notif_to_topic($push_data, 'delivery_man_' . $order->zone_id . '_' . $order->vehicle_id, 'order_request');
+                    $vehicle_topic = 'delivery_man_' . $order->zone_id . '_' . $order->vehicle_id;
+                    Helpers::send_push_notif_to_topic($push_data, $vehicle_topic, 'order_request');
+                    info("Manual dispatch: Push sent to vehicle topic {$vehicle_topic}");
                 }
-                Helpers::send_push_notif_to_topic($push_data, 'zone_' . $order->zone_id . '_delivery_man', 'order_request');
+                $zone_topic = 'zone_' . $order->zone_id . '_delivery_man';
+                Helpers::send_push_notif_to_topic($push_data, $zone_topic, 'order_request');
+                info("Manual dispatch: Push sent to zone topic {$zone_topic}");
+            } else {
+                info("Manual dispatch: Driver push skipped. Either zone is missing or notifications are disabled.");
             }
             
         } catch (\Exception $e) {

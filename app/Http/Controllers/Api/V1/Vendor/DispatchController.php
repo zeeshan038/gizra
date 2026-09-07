@@ -160,7 +160,27 @@ class DispatchController extends Controller
 
         // Use the same notification + SMS pipeline as customer orders.
         try {
-            Helpers::send_order_notification($order->fresh());
+            $order = $order->fresh();
+            Helpers::send_order_notification($order);
+            
+            $deliveryman_push_notification_status = Helpers::getNotificationStatusData('deliveryman','deliveryman_order_notification');
+            
+            // Explicitly push to drivers since send_order_notification skips confirmed COD orders
+            // when the order_confirmation_model is set to 'deliveryman'.
+            if ($order->zone && $deliveryman_push_notification_status?->push_notification_status == 'active') {
+                $push_data = [
+                    'title' => translate('messages.order_push_title'),
+                    'description' => translate('messages.new_order_push_description'),
+                    'order_id' => $order->id,
+                    'image' => '',
+                ];
+                
+                if ($order->vehicle_id) {
+                    Helpers::send_push_notif_to_topic($push_data, 'delivery_man_' . $order->zone_id . '_' . $order->vehicle_id, 'order_request');
+                }
+                Helpers::send_push_notif_to_topic($push_data, 'zone_' . $order->zone_id . '_delivery_man', 'order_request');
+            }
+            
         } catch (\Exception $e) {
             info('manual dispatch notification failed: ' . $e->getMessage());
         }

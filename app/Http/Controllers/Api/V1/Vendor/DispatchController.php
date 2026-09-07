@@ -126,7 +126,8 @@ class DispatchController extends Controller
 
             // Driver matching runs off the restaurant's zone; the submitted zone
             // is recorded for reporting only.
-            $order->zone_id = $request['zone_id'] ? (int) $request['zone_id'] : $restaurant->zone_id;
+            // Always use restaurant zone for driver notifications — not the form zone.
+            $order->zone_id = (int) $restaurant->zone_id;
 
             $order->delivery_address = json_encode([
                 'contact_person_name' => $request['customer_name'],
@@ -157,16 +158,9 @@ class DispatchController extends Controller
             ], 403);
         }
 
-        // Best effort only - a push failure must not lose an order that exists.
+        // Use the same notification + SMS pipeline as customer orders.
         try {
-            Helpers::send_push_notif_to_topic([
-                'title' => 'New order',
-                'description' => 'Order #' . $order->id,
-                'order_id' => $order->id,
-                'image' => '',
-                'type' => 'order_request',
-                'order_type' => $order->order_type,
-            ], 'zone_' . $order->zone_id . '_delivery_man', 'order_request');
+            Helpers::send_order_notification($order->fresh());
         } catch (\Exception $e) {
             info('manual dispatch notification failed: ' . $e->getMessage());
         }

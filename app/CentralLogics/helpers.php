@@ -1665,6 +1665,15 @@ class Helpers
         $deliveryman_push_notification_status=self::getNotificationStatusData('deliveryman','deliveryman_order_notification');
 
         try {
+            $already_notified_new_order = false;
+            if ($order->restaurant && $order->restaurant->vendor_id) {
+                $already_notified_new_order = \Illuminate\Support\Facades\DB::table('user_notifications')
+                    ->where('vendor_id', $order->restaurant->vendor_id)
+                    ->where('data', 'like', '%"order_id":' . $order->id . '%')
+                    ->where('data', 'like', '%"type":"new_order"%')
+                    ->exists();
+            }
+
             $status = ($order->order_status == 'delivered' && $order->delivery_man) ? 'delivery_boy_delivered' : $order->order_status;
 
 
@@ -1759,24 +1768,27 @@ class Helpers
                 )
                 {
 
-                    if($push_notification_status?->push_notification_status  == 'active' && $restaurant_push_notification_status?->push_notification_status  == 'active' && $order?->restaurant?->vendor?->firebase_token){
+                    if(!$already_notified_new_order && $push_notification_status?->push_notification_status  == 'active' && $restaurant_push_notification_status?->push_notification_status  == 'active'){
 
                         $data = [
                             'title' => translate('messages.order_push_title'),
-                            'description' => translate('messages.new_order_push_description'),
+                            'description' => translate('messages.new_order_push_description') . ' - Order ID: ' . $order->id,
                             'order_id' => $order->id,
                             'image' => '',
                             'type' => 'new_order',
                         ];
-                        self::send_push_notif_to_device($order->restaurant->vendor->firebase_token, $data);
+                        if ($order?->restaurant?->vendor?->firebase_token) {
+                            self::send_push_notif_to_device($order->restaurant->vendor->firebase_token, $data);
+                        } else {
+                            $web_push_link = url('/').'/restaurant-panel/order/list/all';
+                            self::send_push_notif_to_topic($data, "restaurant_panel_{$order->restaurant_id}_message", 'new_order', $web_push_link);
+                        }
                         DB::table('user_notifications')->insert([
                             'data' => json_encode($data),
                             'vendor_id' => $order->restaurant->vendor_id,
                             'created_at' => now(),
                             'updated_at' => now()
                         ]);
-                        $web_push_link = url('/').'/restaurant-panel/order/list/all';
-                        self::send_push_notif_to_topic($data, "restaurant_panel_{$order->restaurant_id}_message", 'new_order', $web_push_link);
                     }
 
 
@@ -1798,16 +1810,19 @@ class Helpers
                 }
             }
 
-            if (  $push_notification_status?->push_notification_status  == 'active' && $restaurant_push_notification_status?->push_notification_status  == 'active' && $order->order_type == 'delivery' && !$order->scheduled && $order->order_status == 'pending' && $order->payment_method == 'cash_on_delivery' && config('order_confirmation_model') == 'restaurant') {
+            if ( !$already_notified_new_order && $push_notification_status?->push_notification_status  == 'active' && $restaurant_push_notification_status?->push_notification_status  == 'active' && $order->order_type == 'delivery' && !$order->scheduled && $order->order_status == 'pending' && $order->payment_method == 'cash_on_delivery' && config('order_confirmation_model') == 'restaurant') {
                 $data = [
                     'title' => translate('messages.order_push_title'),
-                    'description' => translate('messages.new_order_push_description'),
+                    'description' => translate('messages.new_order_push_description') . ' - Order ID: ' . $order->id,
                     'order_id' => $order->id,
                     'image' => '',
                     'type' => 'new_order',
                 ];
                 if($order?->restaurant?->vendor?->firebase_token){
                     self::send_push_notif_to_device($order->restaurant->vendor->firebase_token, $data);
+                } else {
+                    $web_push_link = url('/').'/restaurant-panel/order/list/all';
+                    self::send_push_notif_to_topic($data, "restaurant_panel_{$order->restaurant_id}_message", 'new_order', $web_push_link);
                 }
                 DB::table('user_notifications')->insert([
                     'data' => json_encode($data),
@@ -1815,20 +1830,21 @@ class Helpers
                     'created_at' => now(),
                     'updated_at' => now()
                 ]);
-                $web_push_link = url('/').'/restaurant-panel/order/list/all';
-                self::send_push_notif_to_topic($data, "restaurant_panel_{$order->restaurant_id}_message", 'new_order', $web_push_link);
             }
 
-            if (  $push_notification_status?->push_notification_status  == 'active' && $restaurant_push_notification_status?->push_notification_status  == 'active' && !$order->scheduled && ((in_array($order->order_type,['dine_in' ,'take_away']) && $order->order_status == 'pending') || ($order->payment_method != 'cash_on_delivery' && $order->order_status == 'confirmed'))) {
+            if ( !$already_notified_new_order && $push_notification_status?->push_notification_status  == 'active' && $restaurant_push_notification_status?->push_notification_status  == 'active' && !$order->scheduled && ((in_array($order->order_type,['dine_in' ,'take_away']) && $order->order_status == 'pending') || ($order->payment_method != 'cash_on_delivery' && $order->order_status == 'confirmed'))) {
                 $data = [
                     'title' => translate('messages.order_push_title'),
-                    'description' => translate('messages.new_order_push_description'),
+                    'description' => translate('messages.new_order_push_description') . ' - Order ID: ' . $order->id,
                     'order_id' => $order->id,
                     'image' => '',
                     'type' => 'new_order',
                 ];
                 if($order?->restaurant?->vendor?->firebase_token){
                     self::send_push_notif_to_device($order->restaurant->vendor->firebase_token, $data);
+                } else {
+                    $web_push_link = url('/').'/restaurant-panel/order/list/all';
+                    self::send_push_notif_to_topic($data, "restaurant_panel_{$order->restaurant->id}_message", 'new_order', $web_push_link);
                 }
 
                 DB::table('user_notifications')->insert([
@@ -1837,8 +1853,6 @@ class Helpers
                     'created_at' => now(),
                     'updated_at' => now()
                 ]);
-                $web_push_link = url('/').'/restaurant-panel/order/list/all';
-                self::send_push_notif_to_topic($data, "restaurant_panel_{$order->restaurant->id}_message", 'new_order', $web_push_link);
             }
 
             if ($order->order_status == 'confirmed' && $order->order_type != 'take_away' && config('order_confirmation_model') == 'deliveryman' && $order->payment_method == 'cash_on_delivery') {
@@ -1862,10 +1876,13 @@ class Helpers
                         'type' => 'new_order',
                     ];
 
-                    if($push_notification_status?->push_notification_status  == 'active' && $restaurant_push_notification_status?->push_notification_status  == 'active' ){
+                    if(!$already_notified_new_order && $push_notification_status?->push_notification_status  == 'active' && $restaurant_push_notification_status?->push_notification_status  == 'active' ){
 
                         if($order?->restaurant?->vendor?->firebase_token){
                             self::send_push_notif_to_device($order->restaurant->vendor->firebase_token, $data);
+                        } else {
+                            $web_push_link = url('/').'/restaurant-panel/order/list/all';
+                            self::send_push_notif_to_topic($data, "restaurant_panel_{$order->restaurant_id}_message", 'new_order', $web_push_link);
                         }
 
                         DB::table('user_notifications')->insert([
@@ -1874,8 +1891,6 @@ class Helpers
                             'created_at' => now(),
                             'updated_at' => now()
                         ]);
-                        $web_push_link = url('/').'/restaurant-panel/order/list/all';
-                        self::send_push_notif_to_topic($data, "restaurant_panel_{$order->restaurant_id}_message", 'new_order', $web_push_link);
                     }
                 }
             }

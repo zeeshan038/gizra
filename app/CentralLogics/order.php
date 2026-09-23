@@ -99,9 +99,10 @@ class OrderLogic
         $order_amount = $order->order_amount - $order->additional_charge - $order->extra_packaging_amount - $order->delivery_charge - $order->total_tax_amount - $order->dm_tips + $order->coupon_discount_amount + $restaurant_discount_amount + $ref_bonus_amount;
 
         if ($order->is_manual_dispatch == 1) {
-            $comission_amount = round($order_amount * 0.10, 2) + round($order->original_delivery_charge, 2);
+            $rate = (float) (\App\Models\BusinessSetting::where('key', 'manual_dispatch_commission')->first()?->value ?? 10);
+            $comission_amount = round($order_amount * ($rate / 100), 2);
             $subscription_mode = 0;
-            $commission_percentage = 10;
+            $commission_percentage = $rate;
             $comission_on_delivery = 0;
             $comission_on_actual_delivery_fee = 0;
             $received_by = $order->payment_status == 'paid' ? 'restaurant' : 'deliveryman';

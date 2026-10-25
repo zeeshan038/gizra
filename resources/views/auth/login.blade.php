@@ -57,24 +57,24 @@
                     </div>
                 </div>
 
-                @php
-                    $migrationPanelUrl = null;
-                    if (($role ?? null) === 'admin') {
-                        $migrationPanelUrl = 'https://admin.gizra.app/';
-                    } elseif (($role ?? null) === 'vendor') {
-                        $migrationPanelUrl = 'https://restaurant.gizra.app/';
-                    }
-                @endphp
-
-                @if($migrationPanelUrl)
+                @if(($role ?? null) === 'admin')
                     <div class="migration-notice text-center mb-4 p-4 rounded" style="background: #fff7ed; border: 1px solid #fdba74;">
                         <h3 class="h4 mb-3" style="color: #9a3412;">We are migrating to a new panel</h3>
                         <p class="mb-4 text-muted">
-                            This login page is being retired. Please sign in on our new
-                            {{ $role === 'admin' ? 'admin' : 'restaurant' }} panel to continue managing your account.
+                            This login page is being retired. Please sign in on our new admin panel to continue managing your account.
                         </p>
-                        <a href="{{ $migrationPanelUrl }}" class="btn btn-lg btn-block btn-primary">
-                            Go to the new {{ $role === 'admin' ? 'Admin' : 'Restaurant' }} panel
+                        <a href="https://admin.gizra.app/" class="btn btn-lg btn-block btn-primary">
+                            Go to the new Admin panel
+                        </a>
+                    </div>
+                @elseif(($role ?? null) === 'vendor')
+                    <div class="migration-notice text-center mb-4 p-4 rounded" style="background: #fff7ed; border: 1px solid #fdba74;">
+                        <h3 class="h4 mb-3" style="color: #9a3412;">We are migrating to a new panel</h3>
+                        <p class="mb-4 text-muted">
+                            This login page is being retired. Please sign in on our new restaurant panel to continue managing your account.
+                        </p>
+                        <a href="https://restaurant.gizra.app/" class="btn btn-lg btn-block btn-primary">
+                            Go to the new Restaurant panel
                         </a>
                     </div>
                 @else

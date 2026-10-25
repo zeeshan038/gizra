@@ -56,6 +56,28 @@
                         <h2 class="signin-txt">{{ translate('messages.Signin_To_Your_Panel')}}</h2>
                     </div>
                 </div>
+
+                @php
+                    $migrationPanelUrl = null;
+                    if (($role ?? null) === 'admin') {
+                        $migrationPanelUrl = 'https://admin.gizra.app/';
+                    } elseif (($role ?? null) === 'vendor') {
+                        $migrationPanelUrl = 'https://restaurant.gizra.app/';
+                    }
+                @endphp
+
+                @if($migrationPanelUrl)
+                    <div class="migration-notice text-center mb-4 p-4 rounded" style="background: #fff7ed; border: 1px solid #fdba74;">
+                        <h3 class="h4 mb-3" style="color: #9a3412;">We are migrating to a new panel</h3>
+                        <p class="mb-4 text-muted">
+                            This login page is being retired. Please sign in on our new
+                            {{ $role === 'admin' ? 'admin' : 'restaurant' }} panel to continue managing your account.
+                        </p>
+                        <a href="{{ $migrationPanelUrl }}" class="btn btn-lg btn-block btn-primary">
+                            Go to the new {{ $role === 'admin' ? 'Admin' : 'Restaurant' }} panel
+                        </a>
+                    </div>
+                @else
                 <!-- Content -->
                 <label class="badge badge-soft-success float-right initial-1">
                     {{translate('messages.software_version')}} : {{env('SOFTWARE_VERSION')}}
@@ -154,6 +176,7 @@
                     <button type="submit" class="btn btn-lg btn-block btn-primary" id="signInBtn">{{translate('messages.sign_in')}}</button>
                 </form>
                 <!-- End Form -->
+                @endif
 
                 <!-- End Content -->
             </div>

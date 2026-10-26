@@ -12,4 +12,8 @@ Route::group(['namespace' => 'Api\V1', 'middleware' => ['localization', 'react']
     Route::group(['prefix' => 'config'], function () {
         Route::get('/', 'ConfigController@configuration');
     });
+
+    // Splash often loads zones right after config; keep read-only zone endpoints up.
+    Route::get('zone/list', 'ZoneController@get_zones');
+    Route::get('zone/check', 'ZoneController@zonesCheck');
 });

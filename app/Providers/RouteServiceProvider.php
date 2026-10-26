@@ -63,8 +63,13 @@ class RouteServiceProvider extends ServiceProvider
                 ->namespace($this->namespace)
                 ->group(base_path('routes/vendor.php'));
 
-            // Legacy mobile/partner JSON API (/api/v1, /api/v2). Off by default on production.
-            if (filter_var(env('LEGACY_PUBLIC_API_ENABLED', false), FILTER_VALIDATE_BOOLEAN)) {
+            // Legacy mobile API: full routes only when enabled; otherwise config-only for app update popups.
+            $legacyPublicApiEnabled = filter_var(
+                env('LEGACY_PUBLIC_API_ENABLED', false),
+                FILTER_VALIDATE_BOOLEAN
+            );
+
+            if ($legacyPublicApiEnabled) {
                 Route::prefix('api/v1')
                     ->middleware('api')
                     ->namespace($this->namespace)
@@ -74,6 +79,11 @@ class RouteServiceProvider extends ServiceProvider
                     ->middleware('api')
                     ->namespace($this->namespace)
                     ->group(base_path('routes/api/v2/api.php'));
+            } else {
+                Route::prefix('api/v1')
+                    ->middleware('api')
+                    ->namespace($this->namespace)
+                    ->group(base_path('routes/api/v1/legacy-minimal.php'));
             }
 
         });
